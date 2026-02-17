@@ -601,6 +601,164 @@ class BabelVox:
         return int(np.random.choice(len(probs), p=probs))
 
     # ----------------------------------------------------------
+    # Streaming generation
+    # ----------------------------------------------------------
+    def generate_stream(self, text, language="English", ref_audio=None,
+                        ref_text=None, speaker_embed=None,
+                        max_new_tokens=512, temperature=0.9, top_k=50,
+                        top_p=1.0, repetition_penalty=1.05,
+                        subtalker_temperature=0.9, subtalker_top_k=50,
+                        subtalker_top_p=1.0, chunk_frames=12):
+        """Generate speech as a stream of waveform chunks.
+
+        Yields (waveform_chunk, sample_rate) tuples every chunk_frames
+        codec frames (~1 sec per 12 frames). Start playback on the first
+        chunk while generation continues in the background.
+
+        Args:
+            chunk_frames: Number of codec frames per chunk (12 = 1 sec).
+            (All other args identical to generate().)
+
+        Yields:
+            tuple: (waveform_chunk, 24000) for each chunk of audio.
+        """
+        # --- Setup (same as generate) ---
+        if self.use_kv_cache:
+            kv_limit = self.max_kv_len - 20
+            decoder_limit = self.max_decoder_frames
+            effective_max = min(max_new_tokens, kv_limit, decoder_limit)
+            if effective_max < max_new_tokens:
+                max_new_tokens = effective_max
+        elif self.is_npu:
+            talker_limit = self.max_talker_seq - 20
+            decoder_limit = self.max_decoder_frames
+            effective_max = min(max_new_tokens, talker_limit, decoder_limit)
+            if effective_max < max_new_tokens:
+                max_new_tokens = effective_max
+
+        if ref_audio is not None:
+            speaker_embed = self.extract_speaker_embedding(ref_audio)
+        elif speaker_embed is None and self.default_speaker is not None:
+            speaker_embed = self.default_speaker
+
+        prefill_embeds, trailing_text, tts_pad_embed = self.build_prefill_embeds(
+            text, language, speaker_embed, ref_text=ref_text)
+        prefill_len = prefill_embeds.shape[1]
+
+        if self.use_kv_cache:
+            if prefill_len + max_new_tokens > self.max_kv_len:
+                max_new_tokens = self.max_kv_len - prefill_len
+        elif self.is_npu:
+            if prefill_len + max_new_tokens > self.max_talker_seq:
+                max_new_tokens = self.max_talker_seq - prefill_len
+
+        all_codes = []
+        generated_ids = []
+        chunk_buffer = []
+
+        if self.use_kv_cache:
+            logits, hidden, kv_k, kv_v = self._run_talker_prefill(
+                prefill_embeds, prefill_len)
+            current_pos = prefill_len
+        else:
+            seq_embeds = prefill_embeds
+
+        # --- Generation loop with streaming decode ---
+        for step in range(max_new_tokens):
+            if self.use_kv_cache:
+                if step > 0:
+                    logits, hidden, kv_k, kv_v = self._run_talker_decode(
+                        combined, current_pos, kv_k, kv_v)
+                    current_pos += 1
+                if current_pos >= self.max_kv_len:
+                    break
+            else:
+                real_len = seq_embeds.shape[1]
+                if self.is_npu and real_len > self.max_talker_seq:
+                    break
+                logits, hidden = self._run_talker(seq_embeds, real_len)
+
+            raw_logits = logits[0, 0, :] if logits.ndim == 3 else logits.squeeze()
+            raw_logits = self._apply_repetition_penalty(
+                raw_logits.copy(), generated_ids, repetition_penalty)
+            code_0 = self._sample_token(
+                raw_logits, temperature=temperature, top_k=top_k, top_p=top_p)
+
+            if code_0 == self.codec_eos_id:
+                break
+
+            generated_ids.append(code_0)
+
+            # Code predictor
+            code_groups = [code_0]
+            code_0_embed = self.codec_emb[[code_0]][np.newaxis, :, :]
+            cp_input = np.concatenate([hidden, code_0_embed], axis=1)
+
+            if self.use_cp_kv_cache:
+                cp_hidden, cp_kv_k, cp_kv_v, cp_pos = self._run_cp_prefill(cp_input)
+                cp_logits = cp_hidden @ self.cp_heads[0].T
+                cp_code = self._sample_token(
+                    cp_logits[0], temperature=subtalker_temperature,
+                    top_k=subtalker_top_k, top_p=subtalker_top_p)
+                code_groups.append(cp_code)
+                for cp_step in range(1, self.num_code_groups - 1):
+                    next_embed = self.cp_embs[cp_step - 1][[cp_code]][np.newaxis, :, :]
+                    cp_hidden, cp_kv_k, cp_kv_v = self._run_cp_decode(
+                        next_embed, cp_pos, cp_kv_k, cp_kv_v)
+                    cp_pos += 1
+                    cp_logits = cp_hidden @ self.cp_heads[cp_step].T
+                    cp_code = self._sample_token(
+                        cp_logits[0], temperature=subtalker_temperature,
+                        top_k=subtalker_top_k, top_p=subtalker_top_p)
+                    code_groups.append(cp_code)
+            else:
+                for cp_step in range(self.num_code_groups - 1):
+                    cp_len = cp_input.shape[1]
+                    cp_hidden = self._run_code_predictor(cp_input, cp_len)
+                    cp_logits = cp_hidden @ self.cp_heads[cp_step].T
+                    cp_code = self._sample_token(
+                        cp_logits[0], temperature=subtalker_temperature,
+                        top_k=subtalker_top_k, top_p=subtalker_top_p)
+                    code_groups.append(cp_code)
+                    if cp_step < self.num_code_groups - 2:
+                        next_embed = self.cp_embs[cp_step][[cp_code]][np.newaxis, :, :]
+                        cp_input = np.concatenate([cp_input, next_embed], axis=1)
+
+            all_codes.append(code_groups)
+            chunk_buffer.append(code_groups)
+
+            # Yield a chunk when buffer is full
+            if len(chunk_buffer) >= chunk_frames:
+                codes = np.array(chunk_buffer, dtype=np.int64).T[np.newaxis, :, :]
+                yield self._decode_audio(codes), 24000
+                chunk_buffer = []
+
+            # Build next talker input
+            combined = self.codec_emb[[code_groups[0]]]
+            for i in range(1, self.num_code_groups):
+                combined = combined + self.cp_embs[i - 1][[code_groups[i]]]
+            combined = combined[np.newaxis, :, :]
+
+            if step < trailing_text.shape[1]:
+                combined = combined + trailing_text[:, step:step+1]
+            else:
+                combined = combined + tts_pad_embed
+
+            if not self.use_kv_cache:
+                seq_embeds = np.concatenate([seq_embeds, combined], axis=1)
+
+        # Flush remaining frames
+        if chunk_buffer:
+            codes = np.array(chunk_buffer, dtype=np.int64).T[np.newaxis, :, :]
+            wav = self._decode_audio(codes)
+            hit_eos = (len(all_codes) < max_new_tokens)
+            if not hit_eos:
+                fade_samples = min(2400, len(wav))
+                fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+                wav[-fade_samples:] *= fade
+            yield wav, 24000
+
+    # ----------------------------------------------------------
     # Main generation loop
     # ----------------------------------------------------------
     def generate(self, text, language="English", ref_audio=None,
