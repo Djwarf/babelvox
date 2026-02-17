@@ -775,7 +775,9 @@ class BabelVox:
 
         elapsed = time.time() - t0
         n_frames = len(all_codes)
-        print(f"Generated {n_frames} codec frames in {elapsed:.1f}s")
+        hit_eos = (n_frames < max_new_tokens)
+        print(f"Generated {n_frames} codec frames in {elapsed:.1f}s"
+              f"{'' if hit_eos else ' (no EOS, hit ceiling)'}")
         if n_frames > 0:
             audio_secs = n_frames / 12.0
             print(f"  {audio_secs:.1f}s audio, RTF={elapsed/audio_secs:.1f}x")
@@ -788,4 +790,11 @@ class BabelVox:
         print("Decoding audio codes to waveform...")
         codes = np.array(all_codes, dtype=np.int64).T[np.newaxis, :, :]  # (1, 16, T)
         wav = self._decode_audio(codes)
+
+        # Fade out to avoid garbled tail when generation hit the token ceiling
+        if not hit_eos:
+            fade_samples = min(2400, len(wav))  # 0.1s at 24kHz
+            fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+            wav[-fade_samples:] *= fade
+
         return wav, 24000
