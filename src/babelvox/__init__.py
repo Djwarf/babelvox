@@ -4,4 +4,5 @@ from babelvox.pipeline import download_models
 from babelvox.pipeline import mel_spectrogram_np
 from babelvox.server import serve
 
+__version__ = "0.4.0"
 __all__ = ["BabelVox", "download_models", "mel_spectrogram_np", "serve"]

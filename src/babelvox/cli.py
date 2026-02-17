@@ -24,6 +24,8 @@ def main():
                         help="Language for synthesis (default: English)")
     parser.add_argument("--ref-audio", default=None,
                         help="Reference audio path for voice cloning")
+    parser.add_argument("--ref-text", default=None,
+                        help="Transcription of the reference audio (improves cloning)")
     parser.add_argument("--output", "-o", default="output.wav",
                         help="Output WAV file path (default: output.wav)")
     parser.add_argument("--export-dir", default=None,
@@ -50,6 +52,8 @@ def main():
     parser.add_argument("--talker-buckets", type=str, default=None,
                         help="NPU: comma-separated bucket sizes for multi-shape talker "
                              "(e.g. '64,128,256'). Picks smallest bucket per step.")
+    parser.add_argument("--cache-dir", default=None,
+                        help="OpenVINO model cache directory (avoids recompilation)")
     parser.add_argument("--serve", action="store_true",
                         help="Start HTTP server instead of generating once")
     parser.add_argument("--host", default="0.0.0.0",
@@ -74,6 +78,7 @@ def main():
         use_cp_kv_cache=args.cp_kv_cache,
         talker_buckets=talker_buckets,
         precision=precision,
+        cache_dir=args.cache_dir,
     )
 
     if args.serve:
@@ -85,6 +90,7 @@ def main():
             text=args.text,
             language=args.language,
             ref_audio=args.ref_audio,
+            ref_text=args.ref_text,
             max_new_tokens=args.max_tokens,
             temperature=0.9,
             top_k=50,

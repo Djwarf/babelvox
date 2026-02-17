@@ -79,7 +79,7 @@ def handle_tts_request(handler, tts):
         return
 
     kwargs = {"text": text}
-    for key in ("language", "ref_audio", "max_new_tokens",
+    for key in ("language", "ref_audio", "ref_text", "max_new_tokens",
                 "temperature", "top_k", "top_p", "repetition_penalty"):
         if key in body:
             kwargs[key] = body[key]

@@ -113,7 +113,8 @@ class BabelVox:
                  use_kv_cache=False, max_kv_len=256,
                  use_cp_kv_cache=False,
                  talker_buckets=None,
-                 precision="fp16"):
+                 precision="fp16",
+                 cache_dir=None):
         self.device = device
         self.is_npu = (device == "NPU")
         self.use_kv_cache = use_kv_cache
@@ -125,6 +126,7 @@ class BabelVox:
         self.max_speaker_frames = max_speaker_frames
         self.max_decoder_frames = max_decoder_frames
         self.precision = precision
+        self.default_speaker = None  # set to a (1, 1024) numpy array for voice persistence
 
         # Auto-download models if no export_dir provided or dir doesn't exist
         if export_dir is None:
@@ -152,6 +154,9 @@ class BabelVox:
                       f"decoder_frames={max_decoder_frames}")
 
         core = ov.Core()
+        if cache_dir is not None:
+            core.set_property({"CACHE_DIR": cache_dir})
+            print(f"  OpenVINO model cache: {cache_dir}")
         t0 = time.time()
 
         self.cp_on_cpu = False
@@ -339,14 +344,26 @@ class BabelVox:
     # ----------------------------------------------------------
     # Prefill embedding construction
     # ----------------------------------------------------------
-    def build_prefill_embeds(self, text, language, speaker_embed):
+    def build_prefill_embeds(self, text, language, speaker_embed,
+                             ref_text=None):
         """Build the input embedding sequence for the talker prefill.
 
         All operations are pure numpy. Returns (1, T, 1024) arrays.
+        When ref_text is provided (transcription of reference audio),
+        it is prepended to the sequence for better voice cloning.
         """
         formatted = f"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n"
         tokens = self.tokenizer(formatted, return_tensors="np", padding=True)
         input_ids = tokens["input_ids"][0]  # 1D array
+
+        # Reference text for voice cloning (prepended to sequence)
+        ref_text_embed = None
+        if ref_text is not None:
+            ref_formatted = f"<|im_start|>assistant\n{ref_text}<|im_end|>\n"
+            ref_tokens = self.tokenizer(ref_formatted, return_tensors="np",
+                                        padding=True)
+            ref_ids = ref_tokens["input_ids"][0]
+            ref_text_embed = self._text_proj(self._text_embed(ref_ids))
 
         # Language ID
         lang_key = language.lower()
@@ -386,7 +403,13 @@ class BabelVox:
         text_overlay = np.concatenate([pad_expanded, tts_bos_embed], axis=0)
         codec_with_text = text_overlay + codec_input[:-1]  # (C-1, 1024)
 
-        talker_embed = np.concatenate([role_embed, codec_with_text], axis=0)
+        # Build talker sequence: [ref_text] [role] [codec+text overlay]
+        parts = []
+        if ref_text_embed is not None:
+            parts.append(ref_text_embed)
+        parts.append(role_embed)
+        parts.append(codec_with_text)
+        talker_embed = np.concatenate(parts, axis=0)
 
         # First text token + last codec embedding
         first_text = self._text_proj(self._text_embed(input_ids[3:4]))  # (1, 1024)
@@ -581,10 +604,16 @@ class BabelVox:
     # Main generation loop
     # ----------------------------------------------------------
     def generate(self, text, language="English", ref_audio=None,
+                 ref_text=None, speaker_embed=None,
                  max_new_tokens=512, temperature=0.9, top_k=50, top_p=1.0,
                  repetition_penalty=1.05, subtalker_temperature=0.9,
                  subtalker_top_k=50, subtalker_top_p=1.0):
         """Generate speech from text, optionally cloning a reference voice.
+
+        Voice can be specified via ref_audio (path), speaker_embed (numpy
+        array from extract_speaker_embedding()), or self.default_speaker.
+        When using ref_audio, pass ref_text (the transcription of the
+        reference audio) for better voice cloning quality.
 
         Returns:
             tuple: (waveform_array, sample_rate) where waveform is float32
@@ -607,16 +636,17 @@ class BabelVox:
                 print(f"  Clamped max_new_tokens: {max_new_tokens} -> {effective_max} (NPU limits)")
                 max_new_tokens = effective_max
 
-        # Speaker embedding
-        speaker_embed = None
+        # Speaker embedding: ref_audio > explicit speaker_embed > default_speaker
         if ref_audio is not None:
             print("Extracting speaker embedding...")
             speaker_embed = self.extract_speaker_embedding(ref_audio)
+        elif speaker_embed is None and self.default_speaker is not None:
+            speaker_embed = self.default_speaker
 
         # Build prefill
         print("Building prefill embeddings...")
         prefill_embeds, trailing_text, tts_pad_embed = self.build_prefill_embeds(
-            text, language, speaker_embed)
+            text, language, speaker_embed, ref_text=ref_text)
 
         prefill_len = prefill_embeds.shape[1]
         print(f"Prefill: {prefill_len} tokens, trailing text: {trailing_text.shape[1]} tokens")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "babelvox"
-version = "0.3.0"
+version = "0.4.0"
 description = "Real-time text-to-speech on Intel NPU/CPU via OpenVINO"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,13 +19,17 @@ classifiers = [
 
 dependencies = [
   "openvino>=2025.4",
-  "numpy",
-  "librosa",
-  "soundfile",
-  "scipy",
-  "transformers",
-  "huggingface_hub",
+  "numpy>=2.0",
+  "librosa>=0.11",
+  "soundfile>=0.13",
+  "scipy>=1.14",
+  "transformers>=5.0",
+  "huggingface_hub>=1.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/Djwarf/babelvox"
+Issues = "https://github.com/Djwarf/babelvox/issues"
 
 [project.scripts]
 babelvox = "babelvox.cli:main"

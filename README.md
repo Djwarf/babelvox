@@ -34,11 +34,12 @@ wav, sr = tts.generate("Don't panic.", language="English")
 sf.write("output.wav", wav, sr)
 ```
 
-For Intel NPU (Lunar Lake or later), enable hardware acceleration:
+For Intel NPU (Lunar Lake or later), enable hardware acceleration and model caching:
 
 ```python
 tts = BabelVox(device="NPU", precision="int8",
-               use_cp_kv_cache=True, talker_buckets=[64, 128, 256])
+               use_cp_kv_cache=True, talker_buckets=[64, 128, 256],
+               cache_dir="./ov_cache")
 ```
 
 ### From the command line
@@ -49,6 +50,7 @@ babelvox --int8 --cp-kv-cache --text "Hello world" --output hello.wav
 
 # Intel NPU (real-time, RTF=1.0x)
 babelvox --device NPU --int8 --cp-kv-cache --talker-buckets "64,128,256" \
+  --cache-dir ./ov_cache \
   --text "Hello, this is real-time speech synthesis on an Intel NPU." \
   --output hello.wav
 ```
@@ -57,16 +59,49 @@ babelvox --device NPU --int8 --cp-kv-cache --talker-buckets "64,128,256" \
 
 ### Voice cloning
 
-Clone any voice from a short reference audio clip (3-10 seconds):
+Clone any voice from a short reference audio clip (3-10 seconds). For best results, provide a transcription of the reference audio with `ref_text`:
 
 ```python
-wav, sr = tts.generate("This sounds like someone else.",
-                        ref_audio="reference.wav", language="English")
+wav, sr = tts.generate(
+    "This sounds like someone else.",
+    ref_audio="reference.wav",
+    ref_text="The words spoken in reference dot wav.",
+    language="English",
+)
 ```
 
 ```bash
 babelvox --int8 --cp-kv-cache --ref-audio reference.wav \
+  --ref-text "The words spoken in reference dot wav." \
   --text "This sounds like someone else." --output cloned.wav
+```
+
+### Voice persistence
+
+Without a reference audio, each `generate()` call may produce a different voice. To keep a consistent voice across multiple calls:
+
+```python
+# Extract once from reference audio, reuse for all subsequent calls
+tts.default_speaker = tts.extract_speaker_embedding("voice.wav")
+wav1, sr = tts.generate("First sentence.")
+wav2, sr = tts.generate("Second sentence.")  # same voice
+
+# Or pass a speaker embedding directly per call
+embed = tts.extract_speaker_embedding("voice.wav")
+wav, sr = tts.generate("Hello", speaker_embed=embed)
+```
+
+### Model caching
+
+On NPU, OpenVINO compiles models at startup which can take minutes on first run. Use `cache_dir` to cache compiled models so subsequent launches are instant:
+
+```python
+tts = BabelVox(device="NPU", cache_dir="./ov_cache", precision="int8")
+# First run: ~200s compile. Second run: instant.
+```
+
+```bash
+babelvox --device NPU --cache-dir ./ov_cache --int8 --cp-kv-cache
 ```
 
 ### 10 languages
@@ -137,6 +172,7 @@ audio.play();
 | `text` | yes | — | Text to synthesize |
 | `language` | no | `"English"` | One of the 10 supported languages |
 | `ref_audio` | no | `null` | Path to reference WAV for voice cloning |
+| `ref_text` | no | `null` | Transcription of reference audio (improves cloning) |
 | `max_new_tokens` | no | `512` | Max generation steps |
 | `temperature` | no | `0.9` | Sampling temperature |
 | `top_k` | no | `50` | Top-k sampling |
@@ -164,6 +200,7 @@ path = download_models()  # downloads ~2.5 GB to HuggingFace cache
 | `precision` | `"fp16"` | `"fp16"`, `"int8"`, `"int4"`, or `"fp32"` |
 | `use_cp_kv_cache` | `False` | KV cache for code predictor (recommended) |
 | `talker_buckets` | `None` | NPU bucket sizes, e.g. `[64, 128, 256]` |
+| `cache_dir` | `None` | OpenVINO compiled model cache directory |
 
 **`tts.generate(text, language, ref_audio, ...)`** returns `(waveform, sample_rate)`
 
@@ -172,11 +209,17 @@ path = download_models()  # downloads ~2.5 GB to HuggingFace cache
 | `text` | required | Text to synthesize |
 | `language` | `"English"` | One of the 10 supported languages |
 | `ref_audio` | `None` | Path to reference WAV for voice cloning |
+| `ref_text` | `None` | Transcription of the reference audio (improves cloning) |
+| `speaker_embed` | `None` | Pre-extracted speaker embedding (numpy array) |
 | `max_new_tokens` | `512` | Max generation steps (12 steps = 1 sec audio) |
 | `temperature` | `0.9` | Sampling temperature (0 = greedy) |
 | `top_k` | `50` | Top-k sampling |
 | `top_p` | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | `1.05` | Penalty for repeated tokens |
+
+**`tts.extract_speaker_embedding(audio_path)`** returns numpy array `(1, 1024)`
+
+**`tts.default_speaker`** — set to a speaker embedding for consistent voice across calls
 
 ### Exporting models yourself (optional)
 
@@ -263,6 +306,7 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--cp-kv-cache` | off | KV cache for code predictor (recommended) |
 | `--talker-buckets` | none | Comma-separated NPU bucket sizes (e.g. `64,128,256`) |
 | `--kv-cache` | off | KV cache for talker (not recommended on NPU) |
+| `--cache-dir` | none | OpenVINO compiled model cache directory |
 | `--max-tokens` | 200 | Maximum generation steps |
 | `--max-talker-seq` | 256 | Fixed talker padding (when not using buckets) |
 | `--max-decoder-frames` | 256 | Max codec frames for audio decoder |
@@ -270,6 +314,7 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--text` | demo text | Text to synthesize |
 | `--language` | English | Language for synthesis |
 | `--ref-audio` | none | Reference audio for voice cloning |
+| `--ref-text` | none | Transcription of reference audio (improves cloning) |
 | `--serve` | off | Start HTTP server instead of generating once |
 | `--host` | `0.0.0.0` | Server bind address |
 | `--port` | `8765` | Server port |
