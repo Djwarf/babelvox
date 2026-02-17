@@ -104,6 +104,41 @@ tts = BabelVox(device="NPU", cache_dir="./ov_cache", precision="int8")
 babelvox --device NPU --cache-dir ./ov_cache --int8 --cp-kv-cache
 ```
 
+### Streaming generation
+
+Start playback immediately instead of waiting for the full utterance. `generate_stream()` yields waveform chunks every N codec frames (~1 second per 12 frames):
+
+```python
+import sounddevice as sd
+
+for chunk, sr in tts.generate_stream("A long paragraph of text...",
+                                      chunk_frames=12):
+    sd.play(chunk, sr)
+    sd.wait()
+```
+
+For near-zero gap between chunks, overlap generation and playback with a thread:
+
+```python
+import threading, queue
+
+audio_q = queue.Queue()
+
+def producer():
+    for chunk, sr in tts.generate_stream("Long text...", chunk_frames=12):
+        audio_q.put((chunk, sr))
+    audio_q.put(None)
+
+threading.Thread(target=producer).start()
+
+while True:
+    item = audio_q.get()
+    if item is None:
+        break
+    sd.play(item[0], item[1])
+    sd.wait()
+```
+
 ### 10 languages
 
 Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian, Spanish.
@@ -216,6 +251,14 @@ path = download_models()  # downloads ~2.5 GB to HuggingFace cache
 | `top_k` | `50` | Top-k sampling |
 | `top_p` | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | `1.05` | Penalty for repeated tokens |
+
+**`tts.generate_stream(text, language, ..., chunk_frames=12)`** — same args as `generate()`, plus:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `chunk_frames` | `12` | Codec frames per chunk (12 = ~1 sec audio) |
+
+Yields `(waveform_chunk, 24000)` tuples as audio is generated.
 
 **`tts.extract_speaker_embedding(audio_path)`** returns numpy array `(1, 1024)`
 
