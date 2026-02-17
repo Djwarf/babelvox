@@ -26,8 +26,9 @@ def main():
                         help="Reference audio path for voice cloning")
     parser.add_argument("--output", "-o", default="output.wav",
                         help="Output WAV file path (default: output.wav)")
-    parser.add_argument("--export-dir", default="openvino_export",
-                        help="Directory containing exported OpenVINO models")
+    parser.add_argument("--export-dir", default=None,
+                        help="Directory containing exported OpenVINO models "
+                             "(auto-downloads from HuggingFace if not provided)")
     parser.add_argument("--model-path",
                         default="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
                         help="HuggingFace model path (for tokenizer)")

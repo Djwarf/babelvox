@@ -13,25 +13,23 @@ pip install babelvox
 Or from source:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/babelvox.git
+git clone https://github.com/Djwarf/babelvox.git
 cd babelvox
 pip install -e .
 ```
 
 ## Quick start
 
+Models are downloaded automatically from [HuggingFace](https://huggingface.co/djwarf/babelvox-openvino-int8) on first run (~2.5 GB, cached for future use).
+
 ### As a library
 
 ```python
 from babelvox import BabelVox
 
-tts = BabelVox(
-    export_dir="./openvino_export",
-    device="NPU",
-    precision="int8",
-    use_cp_kv_cache=True,
-    talker_buckets=[64, 128, 256],
-)
+# Models auto-download on first use
+tts = BabelVox(device="NPU", precision="int8",
+               use_cp_kv_cache=True, talker_buckets=[64, 128, 256])
 
 wav, sr = tts.generate("Don't panic.", language="English")
 
@@ -42,13 +40,12 @@ sf.write("output.wav", wav, sr)
 ### From the command line
 
 ```bash
-# Real-time on NPU with all optimizations
+# Real-time on NPU with all optimizations (models auto-download)
 babelvox \
   --device NPU \
   --int8 \
   --cp-kv-cache \
   --talker-buckets "64,128,256" \
-  --max-tokens 200 \
   --text "Hello, this is real-time speech synthesis on an Intel NPU." \
   --output hello.wav
 
@@ -57,7 +54,6 @@ babelvox \
   --device CPU \
   --int8 \
   --cp-kv-cache \
-  --max-tokens 200 \
   --text "Hello world" \
   --output hello.wav
 ```

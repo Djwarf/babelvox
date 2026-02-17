@@ -25,6 +25,32 @@ import openvino as ov
 from scipy.special import expit as sigmoid
 from transformers import AutoTokenizer
 
+DEFAULT_HF_REPO = "djwarf/babelvox-openvino-int8"
+
+
+def download_models(repo_id=DEFAULT_HF_REPO, local_dir=None):
+    """Download pre-exported OpenVINO models from HuggingFace Hub.
+
+    Args:
+        repo_id: HuggingFace repo containing the exported models.
+        local_dir: Where to save. If None, uses HF cache
+                   (~/.cache/huggingface/hub/).
+
+    Returns:
+        str: Path to the downloaded model directory.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        raise ImportError(
+            "huggingface_hub is required for auto-download. "
+            "Install it with: pip install huggingface_hub"
+        )
+    print(f"Downloading models from {repo_id}...")
+    path = snapshot_download(repo_id=repo_id, local_dir=local_dir)
+    print(f"Models downloaded to {path}")
+    return path
+
 
 # ============================================================
 # Numpy helper functions
@@ -81,7 +107,7 @@ class BabelVox:
     CP_MAX_KV_LEN = 20  # max 16 tokens in practice (2 prefill + 14 decode)
 
     def __init__(self, model_path="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-                 export_dir="openvino_export", device="CPU",
+                 export_dir=None, device="CPU",
                  max_talker_seq=256, max_cp_seq=17,
                  max_speaker_frames=300, max_decoder_frames=256,
                  use_kv_cache=False, max_kv_len=256,
@@ -100,7 +126,15 @@ class BabelVox:
         self.max_decoder_frames = max_decoder_frames
         self.precision = precision
 
-        # Quantized models live in subdirectories; base FP32 in export_dir root
+        # Auto-download models if no export_dir provided or dir doesn't exist
+        if export_dir is None:
+            export_dir = download_models()
+        elif not os.path.isdir(export_dir):
+            print(f"Export dir '{export_dir}' not found, downloading from HuggingFace...")
+            export_dir = download_models(local_dir=export_dir)
+
+        # HF repo layout: int8/ and weights/ at top level
+        # Local export layout: export_dir/int8/, export_dir/weights/
         if precision in ("int8", "int4", "fp16"):
             model_dir = os.path.join(export_dir, precision)
         else:
