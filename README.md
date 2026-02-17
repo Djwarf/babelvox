@@ -53,6 +53,81 @@ babelvox --device NPU --int8 --cp-kv-cache --talker-buckets "64,128,256" \
   --output hello.wav
 ```
 
+## Features
+
+### Voice cloning
+
+Clone any voice from a short reference audio clip (3-10 seconds):
+
+```python
+wav, sr = tts.generate("This sounds like someone else.",
+                        ref_audio="reference.wav", language="English")
+```
+
+```bash
+babelvox --int8 --cp-kv-cache --ref-audio reference.wav \
+  --text "This sounds like someone else." --output cloned.wav
+```
+
+### 10 languages
+
+Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian, Spanish.
+
+```python
+wav, sr = tts.generate("Bonjour le monde.", language="French")
+wav, sr = tts.generate("Hallo Welt.", language="German")
+```
+
+### Sampling controls
+
+Fine-tune the generation quality and diversity:
+
+```python
+wav, sr = tts.generate(
+    "Hello world",
+    temperature=0.9,          # higher = more expressive, lower = more stable
+    top_k=50,                 # limit sampling to top-k tokens
+    top_p=1.0,                # nucleus sampling threshold
+    repetition_penalty=1.05,  # discourage repeated audio patterns
+    max_new_tokens=512,       # max generation steps (1 step = 1/12 sec audio)
+)
+```
+
+### Pre-download models
+
+Cache models ahead of time instead of on first use:
+
+```python
+from babelvox import download_models
+path = download_models()  # downloads ~2.5 GB to HuggingFace cache
+```
+
+### API reference
+
+**`BabelVox(model_path, export_dir, device, precision, ...)`**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `model_path` | `"Qwen/Qwen3-TTS-12Hz-0.6B-Base"` | HuggingFace model (tokenizer only) |
+| `export_dir` | `None` (auto-download) | Path to exported OpenVINO models |
+| `device` | `"CPU"` | `"CPU"` or `"NPU"` |
+| `precision` | `"fp16"` | `"fp16"`, `"int8"`, `"int4"`, or `"fp32"` |
+| `use_cp_kv_cache` | `False` | KV cache for code predictor (recommended) |
+| `talker_buckets` | `None` | NPU bucket sizes, e.g. `[64, 128, 256]` |
+
+**`tts.generate(text, language, ref_audio, ...)`** returns `(waveform, sample_rate)`
+
+| Parameter | Default | Description |
+|---|---|---|
+| `text` | required | Text to synthesize |
+| `language` | `"English"` | One of the 10 supported languages |
+| `ref_audio` | `None` | Path to reference WAV for voice cloning |
+| `max_new_tokens` | `512` | Max generation steps (12 steps = 1 sec audio) |
+| `temperature` | `0.9` | Sampling temperature (0 = greedy) |
+| `top_k` | `50` | Top-k sampling |
+| `top_p` | `1.0` | Nucleus sampling threshold |
+| `repetition_penalty` | `1.05` | Penalty for repeated tokens |
+
 ### Exporting models yourself (optional)
 
 The pre-built INT8 models are downloaded automatically. If you want to export from scratch (e.g., for a different quantization), the export scripts in `tools/` require PyTorch:
