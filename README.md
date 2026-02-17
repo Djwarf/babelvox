@@ -20,64 +20,53 @@ pip install -e .
 
 ## Quick start
 
-Models are downloaded automatically from [HuggingFace](https://huggingface.co/djwarf/babelvox-openvino-int8) on first run (~2.5 GB, cached for future use).
+Models (~2.5 GB) are **downloaded automatically** from [HuggingFace](https://huggingface.co/djwarf/babelvox-openvino-int8) on first run and cached for future use. No manual setup needed.
 
 ### As a library
 
 ```python
 from babelvox import BabelVox
+import soundfile as sf
 
-# Models auto-download on first use
+# CPU — works on any machine (models auto-download on first use)
+tts = BabelVox(precision="int8", use_cp_kv_cache=True)
+wav, sr = tts.generate("Don't panic.", language="English")
+sf.write("output.wav", wav, sr)
+```
+
+For Intel NPU (Lunar Lake or later), enable hardware acceleration:
+
+```python
 tts = BabelVox(device="NPU", precision="int8",
                use_cp_kv_cache=True, talker_buckets=[64, 128, 256])
-
-wav, sr = tts.generate("Don't panic.", language="English")
-
-import soundfile as sf
-sf.write("output.wav", wav, sr)
 ```
 
 ### From the command line
 
 ```bash
-# Real-time on NPU with all optimizations (models auto-download)
-babelvox \
-  --device NPU \
-  --int8 \
-  --cp-kv-cache \
-  --talker-buckets "64,128,256" \
-  --text "Hello, this is real-time speech synthesis on an Intel NPU." \
-  --output hello.wav
+# CPU (works anywhere, ~1.1x RTF)
+babelvox --int8 --cp-kv-cache --text "Hello world" --output hello.wav
 
-# CPU-only (no NPU required, ~1.1x RTF)
-babelvox \
-  --device CPU \
-  --int8 \
-  --cp-kv-cache \
-  --text "Hello world" \
+# Intel NPU (real-time, RTF=1.0x)
+babelvox --device NPU --int8 --cp-kv-cache --talker-buckets "64,128,256" \
+  --text "Hello, this is real-time speech synthesis on an Intel NPU." \
   --output hello.wav
 ```
 
-## Model export (one-time setup)
+### Exporting models yourself (optional)
 
-BabelVox needs pre-exported OpenVINO IR models. The export scripts in `tools/` require PyTorch and the original Qwen3-TTS model (~2.4 GB download):
+The pre-built INT8 models are downloaded automatically. If you want to export from scratch (e.g., for a different quantization), the export scripts in `tools/` require PyTorch:
 
 ```bash
 pip install torch qwen-tts nncf
-
-# Export OpenVINO IR models
 python tools/export_tts_lm.py
 python tools/export_speaker_encoder.py
 python tools/export_decoder.py
 python tools/export_tokenizer_encoder.py
 python tools/export_cp_kvcache.py
 python tools/export_weights.py
-
-# Quantize to INT8 (recommended)
 python tools/quantize_models.py --int8
 ```
-
-After export, PyTorch is no longer needed.
 
 ## Performance
 
@@ -157,7 +146,7 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--language` | English | Language for synthesis |
 | `--ref-audio` | none | Reference audio for voice cloning |
 | `--output` / `-o` | `output.wav` | Output WAV file path |
-| `--export-dir` | `openvino_export` | Directory with exported models |
+| `--export-dir` | auto-download | Directory with exported models (downloads from HuggingFace if not set) |
 | `--model-path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace model (tokenizer) |
 
 ## Acknowledgments
