@@ -117,6 +117,23 @@ for chunk, sr in tts.generate_stream("A long paragraph of text...",
     sd.wait()
 ```
 
+#### Silence-aware chunking
+
+Split at natural pauses between words instead of fixed intervals. Produces complete words/phrases per chunk with crossfade overlap for click-free playback:
+
+```python
+for chunk, sr in tts.generate_stream(
+    "A long paragraph of text...",
+    split_on_silence=True,   # yield at pauses between words
+    min_chunk_frames=6,      # at least 0.5s per chunk
+    max_chunk_frames=48,     # at most 4s per chunk
+    silence_threshold=0.02,  # RMS energy threshold for silence
+    crossfade_samples=1200,  # 50ms overlap for click-free joins
+):
+    sd.play(chunk, sr)
+    sd.wait()
+```
+
 For near-zero gap between chunks, overlap generation and playback with a thread:
 
 ```python
@@ -125,7 +142,8 @@ import threading, queue
 audio_q = queue.Queue()
 
 def producer():
-    for chunk, sr in tts.generate_stream("Long text...", chunk_frames=12):
+    for chunk, sr in tts.generate_stream("Long text...",
+                                          split_on_silence=True):
         audio_q.put((chunk, sr))
     audio_q.put(None)
 
@@ -256,7 +274,12 @@ path = download_models()  # downloads ~2.5 GB to HuggingFace cache
 
 | Parameter | Default | Description |
 |---|---|---|
-| `chunk_frames` | `12` | Codec frames per chunk (12 = ~1 sec audio) |
+| `chunk_frames` | `12` | Codec frames per chunk when not using silence detection (12 = ~1 sec) |
+| `split_on_silence` | `False` | Yield at natural pauses between words instead of fixed intervals |
+| `min_chunk_frames` | `6` | Minimum frames before considering a silence split (~0.5s) |
+| `max_chunk_frames` | `48` | Force yield after this many frames even without silence (~4s) |
+| `silence_threshold` | `0.02` | RMS energy threshold for silence detection |
+| `crossfade_samples` | `1200` | Overlap samples at chunk edges for click-free joins (50ms at 24kHz) |
 
 Yields `(waveform_chunk, 24000)` tuples as audio is generated.
 

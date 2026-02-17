@@ -608,20 +608,40 @@ class BabelVox:
                         max_new_tokens=512, temperature=0.9, top_k=50,
                         top_p=1.0, repetition_penalty=1.05,
                         subtalker_temperature=0.9, subtalker_top_k=50,
-                        subtalker_top_p=1.0, chunk_frames=12):
+                        subtalker_top_p=1.0, chunk_frames=12,
+                        min_chunk_frames=None, max_chunk_frames=None,
+                        split_on_silence=False, silence_threshold=0.02,
+                        crossfade_samples=1200):
         """Generate speech as a stream of waveform chunks.
 
-        Yields (waveform_chunk, sample_rate) tuples every chunk_frames
-        codec frames (~1 sec per 12 frames). Start playback on the first
-        chunk while generation continues in the background.
+        Yields (waveform_chunk, sample_rate) tuples. By default, chunks
+        are emitted every chunk_frames codec frames (~1 sec per 12
+        frames). With split_on_silence=True, chunks are emitted at
+        natural pauses between words for click-free playback.
 
         Args:
-            chunk_frames: Number of codec frames per chunk (12 = 1 sec).
+            chunk_frames: Fixed chunk size when split_on_silence is False
+                (12 frames = ~1 sec). Ignored when split_on_silence=True.
+            min_chunk_frames: Minimum frames before considering a split
+                (default: 6 = ~0.5s). Only used with split_on_silence.
+            max_chunk_frames: Force yield after this many frames even
+                without silence (default: 48 = ~4s). Only used with
+                split_on_silence.
+            split_on_silence: If True, detect low-energy regions between
+                words and yield at those boundaries.
+            silence_threshold: RMS energy threshold for silence detection
+                (default: 0.02). Lower = more sensitive.
+            crossfade_samples: Overlap samples at chunk edges for
+                click-free joins (default: 1200 = 50ms at 24kHz).
             (All other args identical to generate().)
 
         Yields:
             tuple: (waveform_chunk, 24000) for each chunk of audio.
         """
+        if min_chunk_frames is None:
+            min_chunk_frames = 6
+        if max_chunk_frames is None:
+            max_chunk_frames = 48
         # --- Setup (same as generate) ---
         if self.use_kv_cache:
             kv_limit = self.max_kv_len - 20
@@ -655,6 +675,7 @@ class BabelVox:
         all_codes = []
         generated_ids = []
         chunk_buffer = []
+        prev_overlap = None  # crossfade tail from previous chunk
 
         if self.use_kv_cache:
             logits, hidden, kv_k, kv_v = self._run_talker_prefill(
@@ -662,6 +683,63 @@ class BabelVox:
             current_pos = prefill_len
         else:
             seq_embeds = prefill_embeds
+
+        def _should_yield():
+            """Decide whether to yield the current chunk_buffer."""
+            n = len(chunk_buffer)
+            if not split_on_silence:
+                return n >= chunk_frames
+            if n < min_chunk_frames:
+                return False
+            if n >= max_chunk_frames:
+                return True
+            # Decode the last frame and check its RMS energy
+            last_codes = np.array([chunk_buffer[-1]],
+                                  dtype=np.int64).T[np.newaxis, :, :]
+            frame_wav = self._decode_audio(last_codes)
+            rms = np.sqrt(np.mean(frame_wav ** 2))
+            return rms < silence_threshold
+
+        def _yield_chunk(is_final=False, hit_eos=True):
+            """Decode chunk_buffer, apply crossfade overlap, return wav."""
+            nonlocal prev_overlap
+            codes = np.array(chunk_buffer,
+                             dtype=np.int64).T[np.newaxis, :, :]
+            wav = self._decode_audio(codes)
+
+            if is_final and not hit_eos:
+                fade_len = min(2400, len(wav))
+                fade = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+                wav[-fade_len:] *= fade
+
+            if not split_on_silence or crossfade_samples <= 0:
+                # No crossfade — simple pass-through
+                if prev_overlap is not None:
+                    # Apply pending crossfade from previous chunk
+                    ol = len(prev_overlap)
+                    if ol <= len(wav):
+                        fade_out = np.linspace(1.0, 0.0, ol, dtype=np.float32)
+                        fade_in = np.linspace(0.0, 1.0, ol, dtype=np.float32)
+                        wav[:ol] = prev_overlap * fade_out + wav[:ol] * fade_in
+                    prev_overlap = None
+                return wav
+
+            # Crossfade mode: blend overlap region with previous chunk
+            ol = min(crossfade_samples, len(wav) // 2)
+            if prev_overlap is not None:
+                blend_len = min(len(prev_overlap), ol, len(wav))
+                fade_out = np.linspace(1.0, 0.0, blend_len, dtype=np.float32)
+                fade_in = np.linspace(0.0, 1.0, blend_len, dtype=np.float32)
+                wav[:blend_len] = (prev_overlap[:blend_len] * fade_out
+                                   + wav[:blend_len] * fade_in)
+
+            if not is_final and ol > 0 and len(wav) > ol:
+                prev_overlap = wav[-ol:].copy()
+                wav = wav[:-ol]
+            else:
+                prev_overlap = None
+
+            return wav
 
         # --- Generation loop with streaming decode ---
         for step in range(max_new_tokens):
@@ -727,10 +805,9 @@ class BabelVox:
             all_codes.append(code_groups)
             chunk_buffer.append(code_groups)
 
-            # Yield a chunk when buffer is full
-            if len(chunk_buffer) >= chunk_frames:
-                codes = np.array(chunk_buffer, dtype=np.int64).T[np.newaxis, :, :]
-                yield self._decode_audio(codes), 24000
+            # Yield a chunk when ready
+            if _should_yield():
+                yield _yield_chunk(), 24000
                 chunk_buffer = []
 
             # Build next talker input
@@ -749,14 +826,8 @@ class BabelVox:
 
         # Flush remaining frames
         if chunk_buffer:
-            codes = np.array(chunk_buffer, dtype=np.int64).T[np.newaxis, :, :]
-            wav = self._decode_audio(codes)
             hit_eos = (len(all_codes) < max_new_tokens)
-            if not hit_eos:
-                fade_samples = min(2400, len(wav))
-                fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
-                wav[-fade_samples:] *= fade
-            yield wav, 24000
+            yield _yield_chunk(is_final=True, hit_eos=hit_eos), 24000
 
     # ----------------------------------------------------------
     # Main generation loop
