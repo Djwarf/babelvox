@@ -1,0 +1,173 @@
+# BabelVox
+
+Real-time text-to-speech on Intel NPU via OpenVINO. Runs Qwen3-TTS 0.6B inference entirely on Intel NPU (AI Boost), achieving **RTF=1.0x** (real-time) speech synthesis on a Lunar Lake ultrabook.
+
+No PyTorch at runtime. Dependencies: `openvino`, `numpy`, `librosa`, `soundfile`, `scipy`, `transformers` (tokenizer only).
+
+## Installation
+
+```bash
+pip install babelvox
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/babelvox.git
+cd babelvox
+pip install -e .
+```
+
+## Quick start
+
+### As a library
+
+```python
+from babelvox import BabelVox
+
+tts = BabelVox(
+    export_dir="./openvino_export",
+    device="NPU",
+    precision="int8",
+    use_cp_kv_cache=True,
+    talker_buckets=[64, 128, 256],
+)
+
+wav, sr = tts.generate("Don't panic.", language="English")
+
+import soundfile as sf
+sf.write("output.wav", wav, sr)
+```
+
+### From the command line
+
+```bash
+# Real-time on NPU with all optimizations
+babelvox \
+  --device NPU \
+  --int8 \
+  --cp-kv-cache \
+  --talker-buckets "64,128,256" \
+  --max-tokens 200 \
+  --text "Hello, this is real-time speech synthesis on an Intel NPU." \
+  --output hello.wav
+
+# CPU-only (no NPU required, ~1.1x RTF)
+babelvox \
+  --device CPU \
+  --int8 \
+  --cp-kv-cache \
+  --max-tokens 200 \
+  --text "Hello world" \
+  --output hello.wav
+```
+
+## Model export (one-time setup)
+
+BabelVox needs pre-exported OpenVINO IR models. The export scripts in `tools/` require PyTorch and the original Qwen3-TTS model (~2.4 GB download):
+
+```bash
+pip install torch qwen-tts nncf
+
+# Export OpenVINO IR models
+python tools/export_tts_lm.py
+python tools/export_speaker_encoder.py
+python tools/export_decoder.py
+python tools/export_tokenizer_encoder.py
+python tools/export_cp_kvcache.py
+python tools/export_weights.py
+
+# Quantize to INT8 (recommended)
+python tools/quantize_models.py --int8
+```
+
+After export, PyTorch is no longer needed.
+
+## Performance
+
+### Optimization progression
+
+| Optimization | RTF | Per-step | Notes |
+|---|---|---|---|
+| FP16 NPU baseline | 3.0x | 246 ms | Full-recompute, padded to 256 tokens |
+| + INT8 quantization | 2.1x | 156 ms | NNCF INT8_SYM weight compression |
+| + CP KV cache | 1.4x | 106 ms | Eliminates redundant code predictor recomputation |
+| + Multi-bucket talker | **1.0x** | **~80 ms** | Dynamically picks smallest NPU shape per step |
+
+RTF = Real-Time Factor. RTF=1.0x means generating 1 second of audio takes 1 second of compute.
+
+### Where the time goes (INT8 + CP KV cache, 256-token bucket)
+
+| Component | Device | Time | Share |
+|---|---|---|---|
+| Talker (28-layer transformer) | NPU | 61 ms | 57% |
+| Code predictor (15 groups) | CPU | 45 ms | 43% |
+| Numpy overhead (embeddings, sampling) | CPU | <1 ms | <1% |
+
+### Multi-bucket scaling
+
+The talker scales linearly with sequence length on NPU. Pre-compiling at multiple sizes and routing to the smallest bucket that fits dramatically reduces wasted compute:
+
+| Bucket size | Talker time | Total (+ 45ms CP) | Effective RTF |
+|---|---|---|---|
+| 64 | 15 ms | 60 ms | 0.72x |
+| 128 | 22 ms | 67 ms | 0.80x |
+| 192 | 31 ms | 76 ms | 0.91x |
+| 256 | 43 ms | 88 ms | 1.06x |
+
+## Hardware tested
+
+- **CPU**: Intel Core Ultra 7 258V (Lunar Lake)
+- **NPU**: Intel AI Boost (~13 TOPS)
+- **RAM**: 32 GB LPDDR5x
+- **Device**: Samsung Galaxy Book5 Pro
+
+## Architecture
+
+Qwen3-TTS uses 5 model components orchestrated in an autoregressive loop:
+
+```
+Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec code_0
+                                               |
+                       Speaker Embedding ------+    code_0 --> Code Predictor (5L) --> codes 1-15
+                       (from reference audio)            \--> repeat 15x with KV cache
+                                                                     |
+                                           All 16 codes --> Tokenizer Decoder --> Waveform
+```
+
+| Component | Layers | Hidden | Heads | Device | INT8 size |
+|---|---|---|---|---|---|
+| **Talker** | 28 | 1024 | 16Q/8KV | NPU | 444 MB |
+| **Code predictor** | 5 | 1024 | 16Q/8KV | CPU | 79 MB |
+| **Tokenizer encoder** | -- | -- | -- | NPU | 48 MB |
+| **Tokenizer decoder** | -- | -- | -- | NPU | 114 MB |
+| **Speaker encoder** | -- | -- | -- | NPU | 9 MB |
+
+## CLI reference
+
+| Flag | Default | Description |
+|---|---|---|
+| `--device` | `CPU` | `CPU` or `NPU` |
+| `--int8` | off | Use INT8 quantized models |
+| `--precision` | `fp16` | `fp16`, `int8`, `int4`, or `fp32` |
+| `--cp-kv-cache` | off | KV cache for code predictor (recommended) |
+| `--talker-buckets` | none | Comma-separated NPU bucket sizes (e.g. `64,128,256`) |
+| `--kv-cache` | off | KV cache for talker (not recommended on NPU) |
+| `--max-tokens` | 200 | Maximum generation steps |
+| `--max-talker-seq` | 256 | Fixed talker padding (when not using buckets) |
+| `--max-decoder-frames` | 256 | Max codec frames for audio decoder |
+| `--max-kv-len` | 256 | KV cache buffer size (if `--kv-cache`) |
+| `--text` | demo text | Text to synthesize |
+| `--language` | English | Language for synthesis |
+| `--ref-audio` | none | Reference audio for voice cloning |
+| `--output` / `-o` | `output.wav` | Output WAV file path |
+| `--export-dir` | `openvino_export` | Directory with exported models |
+| `--model-path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace model (tokenizer) |
+
+## Acknowledgments
+
+Based on [Qwen3-TTS](https://github.com/Qwen/Qwen3-TTS) by Alibaba Qwen Team (Apache-2.0).
+
+## License
+
+Apache-2.0
