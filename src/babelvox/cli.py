@@ -50,6 +50,12 @@ def main():
     parser.add_argument("--talker-buckets", type=str, default=None,
                         help="NPU: comma-separated bucket sizes for multi-shape talker "
                              "(e.g. '64,128,256'). Picks smallest bucket per step.")
+    parser.add_argument("--serve", action="store_true",
+                        help="Start HTTP server instead of generating once")
+    parser.add_argument("--host", default="0.0.0.0",
+                        help="Server bind address (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8765,
+                        help="Server port (default: 8765)")
     args = parser.parse_args()
 
     precision = args.precision or ("int8" if args.int8 else "fp16")
@@ -70,23 +76,27 @@ def main():
         precision=precision,
     )
 
-    print(f"\n--- Generating with BabelVox ({args.device}) ---")
-    wav, sr = tts.generate(
-        text=args.text,
-        language=args.language,
-        ref_audio=args.ref_audio,
-        max_new_tokens=args.max_tokens,
-        temperature=0.9,
-        top_k=50,
-    )
+    if args.serve:
+        from babelvox.server import serve
+        serve(tts, host=args.host, port=args.port)
+    else:
+        print(f"\n--- Generating with BabelVox ({args.device}) ---")
+        wav, sr = tts.generate(
+            text=args.text,
+            language=args.language,
+            ref_audio=args.ref_audio,
+            max_new_tokens=args.max_tokens,
+            temperature=0.9,
+            top_k=50,
+        )
 
-    # Ensure output directory exists
-    out_dir = os.path.dirname(args.output)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+        # Ensure output directory exists
+        out_dir = os.path.dirname(args.output)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
 
-    sf.write(args.output, wav, sr)
-    print(f"\nSaved to {args.output} ({len(wav)/sr:.2f}s @ {sr}Hz)")
+        sf.write(args.output, wav, sr)
+        print(f"\nSaved to {args.output} ({len(wav)/sr:.2f}s @ {sr}Hz)")
 
 
 if __name__ == "__main__":

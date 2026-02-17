@@ -93,6 +93,56 @@ wav, sr = tts.generate(
 )
 ```
 
+### HTTP API (cross-language integration)
+
+Run BabelVox as an HTTP server so any language (JavaScript, Go, Rust, etc.) can call it:
+
+```bash
+babelvox --serve --int8 --cp-kv-cache --port 8765
+```
+
+Then from any client:
+
+```bash
+curl -X POST http://localhost:8765/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello world", "language": "English"}' \
+  -o hello.wav
+```
+
+From JavaScript:
+
+```javascript
+const res = await fetch("http://localhost:8765/tts", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text: "Hello world" }),
+});
+const blob = await res.blob();
+const audio = new Audio(URL.createObjectURL(blob));
+audio.play();
+```
+
+**Endpoints:**
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/tts` | Synthesize speech — JSON body in, WAV bytes out |
+| `GET` | `/health` | Health check — returns `{"status": "ok"}` |
+
+**POST /tts request body:**
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `text` | yes | — | Text to synthesize |
+| `language` | no | `"English"` | One of the 10 supported languages |
+| `ref_audio` | no | `null` | Path to reference WAV for voice cloning |
+| `max_new_tokens` | no | `512` | Max generation steps |
+| `temperature` | no | `0.9` | Sampling temperature |
+| `top_k` | no | `50` | Top-k sampling |
+| `top_p` | no | `1.0` | Nucleus sampling threshold |
+| `repetition_penalty` | no | `1.05` | Penalty for repeated tokens |
+
 ### Pre-download models
 
 Cache models ahead of time instead of on first use:
@@ -220,6 +270,9 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--text` | demo text | Text to synthesize |
 | `--language` | English | Language for synthesis |
 | `--ref-audio` | none | Reference audio for voice cloning |
+| `--serve` | off | Start HTTP server instead of generating once |
+| `--host` | `0.0.0.0` | Server bind address |
+| `--port` | `8765` | Server port |
 | `--output` / `-o` | `output.wav` | Output WAV file path |
 | `--export-dir` | auto-download | Directory with exported models (downloads from HuggingFace if not set) |
 | `--model-path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace model (tokenizer) |
