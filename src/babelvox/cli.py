@@ -1,12 +1,13 @@
 """BabelVox command-line interface."""
 import argparse
+import logging
 import os
-import sys
 
-import numpy as np
 import soundfile as sf
 
 from babelvox.pipeline import BabelVox
+
+logger = logging.getLogger("babelvox")
 
 
 def main():
@@ -62,7 +63,18 @@ def main():
                         help="Server bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8765,
                         help="Server port (default: 8765)")
+    parser.add_argument("--cors-origin", default="*",
+                        help="CORS Allow-Origin header (default: *)")
+    parser.add_argument("--audio-dir", default=None,
+                        help="Allowed directory for ref_audio paths in server mode")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Enable debug logging")
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    )
 
     precision = args.precision or ("int8" if args.int8 else "fp16")
     talker_buckets = None
@@ -86,9 +98,10 @@ def main():
 
     if args.serve:
         from babelvox.server import serve
-        serve(tts, host=args.host, port=args.port)
+        serve(tts, host=args.host, port=args.port,
+              cors_origin=args.cors_origin, audio_dir=args.audio_dir)
     else:
-        print(f"\n--- Generating with BabelVox ({args.device}) ---")
+        logger.info("Generating with BabelVox (%s)...", args.device)
         wav, sr = tts.generate(
             text=args.text,
             language=args.language,
@@ -105,7 +118,7 @@ def main():
             os.makedirs(out_dir, exist_ok=True)
 
         sf.write(args.output, wav, sr)
-        print(f"\nSaved to {args.output} ({len(wav)/sr:.2f}s @ {sr}Hz)")
+        logger.info("Saved to %s (%.2fs @ %dHz)", args.output, len(wav)/sr, sr)
 
 
 if __name__ == "__main__":

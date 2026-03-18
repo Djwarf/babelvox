@@ -1,8 +1,12 @@
 """BabelVox: Real-time text-to-speech on Intel NPU/CPU via OpenVINO."""
-from babelvox.pipeline import BabelVox
-from babelvox.pipeline import download_models
-from babelvox.pipeline import mel_spectrogram_np
+from importlib.metadata import PackageNotFoundError, version
+
+from babelvox.pipeline import BabelVox, download_models, mel_spectrogram_np
 from babelvox.server import serve
 
-__version__ = "0.6.0"
+try:
+    __version__ = version("babelvox")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
 __all__ = ["BabelVox", "download_models", "mel_spectrogram_np", "serve"]

@@ -15,15 +15,18 @@ Inputs are zero-padded to the fixed size; outputs are extracted at the
 correct position (causal attention prevents real tokens from seeing padding).
 """
 import json
+import logging
 import os
 import time
 
-import numpy as np
 import librosa
-from librosa.filters import mel as librosa_mel_fn
+import numpy as np
 import openvino as ov
+from librosa.filters import mel as librosa_mel_fn
 from scipy.special import expit as sigmoid
 from transformers import AutoTokenizer
+
+logger = logging.getLogger("babelvox")
 
 DEFAULT_HF_REPO = "djwarf/babelvox-openvino-int8"
 
@@ -41,14 +44,14 @@ def download_models(repo_id=DEFAULT_HF_REPO, local_dir=None):
     """
     try:
         from huggingface_hub import snapshot_download
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "huggingface_hub is required for auto-download. "
             "Install it with: pip install huggingface_hub"
-        )
-    print(f"Downloading models from {repo_id}...")
+        ) from exc
+    logger.info("Downloading models from %s...", repo_id)
     path = snapshot_download(repo_id=repo_id, local_dir=local_dir)
-    print(f"Models downloaded to {path}")
+    logger.info("Models downloaded to %s", path)
     return path
 
 
@@ -134,7 +137,7 @@ class BabelVox:
         if export_dir is None:
             export_dir = download_models()
         elif not os.path.isdir(export_dir):
-            print(f"Export dir '{export_dir}' not found, downloading from HuggingFace...")
+            logger.info("Export dir '%s' not found, downloading from HuggingFace...", export_dir)
             export_dir = download_models(local_dir=export_dir)
 
         # HF repo layout: int8/ and weights/ at top level
@@ -144,28 +147,29 @@ class BabelVox:
         else:
             model_dir = export_dir
 
-        print(f"Loading OpenVINO models on {device} (precision={precision})...")
+        logger.info("Loading OpenVINO models on %s (precision=%s)...", device, precision)
         if self.is_npu:
             if use_kv_cache:
-                print(f"  NPU KV cache mode: max_kv_len={max_kv_len}, "
-                      f"speaker_frames={max_speaker_frames}, "
-                      f"decoder_frames={max_decoder_frames}")
+                logger.info("  NPU KV cache mode: max_kv_len=%d, "
+                            "speaker_frames=%d, decoder_frames=%d",
+                            max_kv_len, max_speaker_frames, max_decoder_frames)
             else:
-                print(f"  NPU fixed shapes: talker_seq={max_talker_seq}, "
-                      f"cp_seq={max_cp_seq}, speaker_frames={max_speaker_frames}, "
-                      f"decoder_frames={max_decoder_frames}")
+                logger.info("  NPU fixed shapes: talker_seq=%d, cp_seq=%d, "
+                            "speaker_frames=%d, decoder_frames=%d",
+                            max_talker_seq, max_cp_seq, max_speaker_frames,
+                            max_decoder_frames)
 
         core = ov.Core()
         if cache_dir is not None:
             core.set_property({"CACHE_DIR": cache_dir})
-            print(f"  OpenVINO model cache: {cache_dir}")
+            logger.info("  OpenVINO model cache: %s", cache_dir)
 
         if self.is_npu:
             try:
                 npu_name = core.get_property("NPU", "FULL_DEVICE_NAME")
-                print(f"  NPU device: {npu_name}")
+                logger.info("  NPU device: %s", npu_name)
             except Exception:
-                pass
+                logger.debug("Could not query NPU device name")
 
         t0 = time.time()
 
@@ -194,23 +198,28 @@ class BabelVox:
             self.tok_decoder = core.compile_model(
                 os.path.join(model_dir, "tokenizer_decoder.xml"), device)
 
-        print(f"  OpenVINO models compiled in {time.time() - t0:.1f}s")
+        logger.info("  OpenVINO models compiled in %.1fs", time.time() - t0)
         if self.is_npu and cache_dir is None:
-            print("  TIP: Use --cache-dir ./ov_cache to cache compiled models "
-                  "for instant startup next time.", flush=True)
+            logger.info("  TIP: Use --cache-dir ./ov_cache to cache compiled models "
+                        "for instant startup next time.")
 
         # Load numpy weights (embeddings + projections)
-        print("Loading numpy weights...")
+        logger.info("Loading numpy weights...")
         t0 = time.time()
         self._load_numpy_weights(os.path.join(export_dir, "weights"))
 
         # Load tokenizer (lightweight — no model needed)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        print(f"  Weights + tokenizer loaded in {time.time() - t0:.1f}s")
+        logger.info("  Weights + tokenizer loaded in %.1fs", time.time() - t0)
 
     def _load_numpy_weights(self, weights_dir):
         """Load pre-exported embedding tables and projection weights."""
-        with open(os.path.join(weights_dir, "config.json")) as f:
+        config_path = os.path.join(weights_dir, "config.json")
+        if not os.path.isfile(config_path):
+            raise FileNotFoundError(
+                f"Config not found: {config_path}. "
+                "Re-download models or check export_dir.")
+        with open(config_path) as f:
             cfg = json.load(f)
 
         self.hidden_size = cfg["hidden_size"]
@@ -227,24 +236,32 @@ class BabelVox:
         self.tts_pad_id = cfg["tts_pad_token_id"]
         self.codec_language_id = cfg["codec_language_id"]
 
+        def _load_npy(name):
+            path = os.path.join(weights_dir, name)
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"Required weight file not found: {path}. "
+                    "Re-download models or check export_dir.")
+            return np.load(path)
+
         # Embeddings
-        self.codec_emb = np.load(os.path.join(weights_dir, "codec_embedding.npy"))
-        text_emb_f16 = np.load(os.path.join(weights_dir, "text_embedding.npy"))
+        self.codec_emb = _load_npy("codec_embedding.npy")
+        text_emb_f16 = _load_npy("text_embedding.npy")
         self.text_emb = text_emb_f16.astype(np.float32)
 
         # Text projection MLP weights (fc1 -> SiLU -> fc2)
-        self.tp_fc1_w = np.load(os.path.join(weights_dir, "text_proj_fc1_weight.npy"))
-        self.tp_fc1_b = np.load(os.path.join(weights_dir, "text_proj_fc1_bias.npy"))
-        self.tp_fc2_w = np.load(os.path.join(weights_dir, "text_proj_fc2_weight.npy"))
-        self.tp_fc2_b = np.load(os.path.join(weights_dir, "text_proj_fc2_bias.npy"))
+        self.tp_fc1_w = _load_npy("text_proj_fc1_weight.npy")
+        self.tp_fc1_b = _load_npy("text_proj_fc1_bias.npy")
+        self.tp_fc2_w = _load_npy("text_proj_fc2_weight.npy")
+        self.tp_fc2_b = _load_npy("text_proj_fc2_bias.npy")
 
         # Code predictor embeddings and lm_heads
         self.cp_embs = [
-            np.load(os.path.join(weights_dir, f"cp_embedding_{i}.npy"))
+            _load_npy(f"cp_embedding_{i}.npy")
             for i in range(self.num_code_groups - 1)
         ]
         self.cp_heads = [
-            np.load(os.path.join(weights_dir, f"cp_lm_head_{i}_weight.npy"))
+            _load_npy(f"cp_lm_head_{i}_weight.npy")
             for i in range(self.num_code_groups - 1)
         ]
 
@@ -254,28 +271,27 @@ class BabelVox:
             return core.compile_model(model, "NPU"), "NPU"
         except Exception as e:
             if self.fallback_cpu:
-                print(f"    WARNING: NPU compilation failed for {name}: {e}",
-                      flush=True)
-                print(f"    Falling back to CPU for {name}.", flush=True)
+                logger.warning("NPU compilation failed for %s: %s", name, e)
+                logger.warning("Falling back to CPU for %s.", name)
                 return core.compile_model(model, "CPU"), "CPU"
             raise
 
     def _load_npu_models(self, core, export_dir):
         """Read, reshape to fixed dims, and compile each model for NPU."""
-        print("    Compiling speaker encoder for NPU...", flush=True)
+        logger.info("    Compiling speaker encoder for NPU...")
         t1 = time.time()
         m = core.read_model(os.path.join(export_dir, "speaker_encoder.xml"))
         m.reshape({"mel_spectrogram": [1, self.max_speaker_frames, 128]})
         self.speaker_enc, dev = self._compile_npu(core, m, "speaker_encoder")
-        print(f"    Speaker encoder: {time.time()-t1:.1f}s ({dev})")
+        logger.info("    Speaker encoder: %.1fs (%s)", time.time()-t1, dev)
 
         if self.use_kv_cache:
             t1 = time.time()
             self.talker_prefill = core.compile_model(
                 os.path.join(export_dir, "talker_prefill.xml"), "CPU")
-            print(f"    Talker prefill:  {time.time()-t1:.1f}s (CPU)")
+            logger.info("    Talker prefill:  %.1fs (CPU)", time.time()-t1)
 
-            print("    Compiling talker decode for NPU...", flush=True)
+            logger.info("    Compiling talker decode for NPU...")
             t1 = time.time()
             m = core.read_model(os.path.join(export_dir, "talker_decode.xml"))
             m.reshape({
@@ -287,18 +303,19 @@ class BabelVox:
                 "past_values": [28, 1, 8, self.max_kv_len, 128],
             })
             self.talker_decode, dev = self._compile_npu(core, m, "talker_decode")
-            print(f"    Talker decode:   {time.time()-t1:.1f}s ({dev}, kv_len={self.max_kv_len})")
+            logger.info("    Talker decode:   %.1fs (%s, kv_len=%d)",
+                        time.time()-t1, dev, self.max_kv_len)
         else:
             talker_xml = os.path.join(export_dir, "talker.xml")
             if self.talker_bucket_sizes:
                 # Multi-bucket: compile at each size for dynamic shape selection
-                print(f"    Compiling talker at {len(self.talker_bucket_sizes)} "
-                      f"bucket sizes: {self.talker_bucket_sizes}", flush=True)
-                print(f"    (First compilation can take several minutes per bucket "
-                      f"depending on hardware.)", flush=True)
+                logger.info("    Compiling talker at %d bucket sizes: %s",
+                            len(self.talker_bucket_sizes), self.talker_bucket_sizes)
+                logger.info("    (First compilation can take several minutes per bucket "
+                            "depending on hardware.)")
                 self.talker_buckets = {}
                 for bsize in self.talker_bucket_sizes:
-                    print(f"    Compiling talker @{bsize}...", flush=True)
+                    logger.info("    Compiling talker @%d...", bsize)
                     t1 = time.time()
                     m = core.read_model(talker_xml)
                     m.reshape({
@@ -307,11 +324,10 @@ class BabelVox:
                     })
                     self.talker_buckets[bsize], dev = self._compile_npu(
                         core, m, f"talker@{bsize}")
-                    print(f"    Talker @{bsize:3d}:     {time.time()-t1:.1f}s ({dev})")
+                    logger.info("    Talker @%3d:     %.1fs (%s)", bsize, time.time()-t1, dev)
                 self.max_talker_seq = max(self.talker_bucket_sizes)
             else:
-                print(f"    Compiling talker (seq={self.max_talker_seq}) for NPU...",
-                      flush=True)
+                logger.info("    Compiling talker (seq=%d) for NPU...", self.max_talker_seq)
                 t1 = time.time()
                 m = core.read_model(talker_xml)
                 m.reshape({
@@ -319,7 +335,7 @@ class BabelVox:
                     "position_ids": [3, 1, self.max_talker_seq],
                 })
                 self.talker, dev = self._compile_npu(core, m, "talker")
-                print(f"    Talker (28L):    {time.time()-t1:.1f}s ({dev})")
+                logger.info("    Talker (28L):    %.1fs (%s)", time.time()-t1, dev)
 
         t1 = time.time()
         if self.use_cp_kv_cache:
@@ -327,19 +343,19 @@ class BabelVox:
                 os.path.join(export_dir, "cp_prefill.xml"), "CPU")
             self.cp_decode = core.compile_model(
                 os.path.join(export_dir, "cp_decode.xml"), "CPU")
-            print(f"    CP prefill+decode: {time.time()-t1:.1f}s (CPU - KV cache)")
+            logger.info("    CP prefill+decode: %.1fs (CPU - KV cache)", time.time()-t1)
         else:
             self.code_predictor = core.compile_model(
                 os.path.join(export_dir, "code_predictor.xml"), "CPU")
-            print(f"    Code predictor:  {time.time()-t1:.1f}s (CPU - hybrid)")
+            logger.info("    Code predictor:  %.1fs (CPU - hybrid)", time.time()-t1)
         self.cp_on_cpu = True
 
-        print("    Compiling tokenizer decoder for NPU...", flush=True)
+        logger.info("    Compiling tokenizer decoder for NPU...")
         t1 = time.time()
         m = core.read_model(os.path.join(export_dir, "tokenizer_decoder.xml"))
         m.reshape({"codes": [1, 16, self.max_decoder_frames]})
         self.tok_decoder, dev = self._compile_npu(core, m, "tokenizer_decoder")
-        print(f"    Tok decoder:     {time.time()-t1:.1f}s ({dev})")
+        logger.info("    Tok decoder:     %.1fs (%s)", time.time()-t1, dev)
 
     # ----------------------------------------------------------
     # Numpy embedding/projection helpers
@@ -362,7 +378,14 @@ class BabelVox:
     # ----------------------------------------------------------
     def extract_speaker_embedding(self, audio_path):
         """Extract speaker embedding from reference audio using OpenVINO."""
-        audio, sr = librosa.load(audio_path, sr=24000)
+        if not os.path.isfile(audio_path):
+            raise FileNotFoundError(f"Reference audio not found: {audio_path}")
+        try:
+            audio, sr = librosa.load(audio_path, sr=24000)
+        except Exception as e:
+            raise ValueError(f"Failed to load reference audio: {e}") from e
+        if len(audio) == 0:
+            raise ValueError("Reference audio is empty")
         mel = mel_spectrogram_np(audio)  # (128, T)
         mel_np = mel.T[np.newaxis, :, :].astype(np.float32)  # (1, T, 128)
 
@@ -404,6 +427,10 @@ class BabelVox:
         # Language ID
         lang_key = language.lower()
         language_id = self.codec_language_id.get(lang_key)
+        if language_id is None:
+            logger.warning("Language '%s' not recognized; available: %s. "
+                           "Falling back to language-agnostic mode.",
+                           language, list(self.codec_language_id.keys()))
 
         # Special text embeddings -> project through MLP
         special_ids = [self.tts_bos_id, self.tts_eos_id, self.tts_pad_id]
@@ -891,56 +918,60 @@ class BabelVox:
             decoder_limit = self.max_decoder_frames
             effective_max = min(max_new_tokens, kv_limit, decoder_limit)
             if effective_max < max_new_tokens:
-                print(f"  Clamped max_new_tokens: {max_new_tokens} -> {effective_max} (KV/decoder limits)")
+                logger.debug("Clamped max_new_tokens: %d -> %d (KV/decoder limits)",
+                             max_new_tokens, effective_max)
                 max_new_tokens = effective_max
         elif self.is_npu:
             talker_limit = self.max_talker_seq - 20
             decoder_limit = self.max_decoder_frames
             effective_max = min(max_new_tokens, talker_limit, decoder_limit)
             if effective_max < max_new_tokens:
-                print(f"  Clamped max_new_tokens: {max_new_tokens} -> {effective_max} (NPU limits)")
+                logger.debug("Clamped max_new_tokens: %d -> %d (NPU limits)",
+                             max_new_tokens, effective_max)
                 max_new_tokens = effective_max
 
         # Speaker embedding: ref_audio > explicit speaker_embed > default_speaker
         if ref_audio is not None:
-            print("Extracting speaker embedding...")
+            logger.info("Extracting speaker embedding...")
             speaker_embed = self.extract_speaker_embedding(ref_audio)
         elif speaker_embed is None and self.default_speaker is not None:
             speaker_embed = self.default_speaker
 
         # Build prefill
-        print("Building prefill embeddings...")
+        logger.debug("Building prefill embeddings...")
         prefill_embeds, trailing_text, tts_pad_embed = self.build_prefill_embeds(
             text, language, speaker_embed, ref_text=ref_text)
 
         prefill_len = prefill_embeds.shape[1]
-        print(f"Prefill: {prefill_len} tokens, trailing text: {trailing_text.shape[1]} tokens")
+        logger.debug("Prefill: %d tokens, trailing text: %d tokens",
+                     prefill_len, trailing_text.shape[1])
 
         if self.use_kv_cache:
             if prefill_len + max_new_tokens > self.max_kv_len:
                 max_new_tokens = self.max_kv_len - prefill_len
-                print(f"  Adjusted max_new_tokens to {max_new_tokens} for KV cache fit")
+                logger.debug("Adjusted max_new_tokens to %d for KV cache fit", max_new_tokens)
         elif self.is_npu:
             if prefill_len + max_new_tokens > self.max_talker_seq:
                 max_new_tokens = self.max_talker_seq - prefill_len
-                print(f"  Adjusted max_new_tokens to {max_new_tokens} for prefill+gen fit")
+                logger.debug("Adjusted max_new_tokens to %d for prefill+gen fit", max_new_tokens)
 
         # Generation setup
         all_codes = []
         generated_ids = []
 
         if self.use_kv_cache:
-            print(f"Running talker prefill ({prefill_len} tokens on CPU)...")
+            logger.debug("Running talker prefill (%d tokens on CPU)...", prefill_len)
             t_pf = time.time()
             logits, hidden, kv_k, kv_v = self._run_talker_prefill(
                 prefill_embeds, prefill_len)
-            print(f"  Prefill done in {time.time() - t_pf:.2f}s")
+            logger.debug("  Prefill done in %.2fs", time.time() - t_pf)
             current_pos = prefill_len
         else:
             seq_embeds = prefill_embeds
 
         mode_str = "KV-cache" if self.use_kv_cache else "full-recompute"
-        print(f"Generating (max {max_new_tokens} steps, {mode_str}, device={self.device})...")
+        logger.info("Generating (max %d steps, %s, device=%s)...",
+                    max_new_tokens, mode_str, self.device)
         t0 = time.time()
 
         for step in range(max_new_tokens):
@@ -951,12 +982,12 @@ class BabelVox:
                         combined, current_pos, kv_k, kv_v)
                     current_pos += 1
                 if current_pos >= self.max_kv_len:
-                    print(f"  Reached KV cache limit at step {step}")
+                    logger.debug("Reached KV cache limit at step %d", step)
                     break
             else:
                 real_len = seq_embeds.shape[1]
                 if self.is_npu and real_len > self.max_talker_seq:
-                    print(f"  Reached NPU sequence limit at step {step}")
+                    logger.debug("Reached NPU sequence limit at step %d", step)
                     break
                 logits, hidden = self._run_talker(seq_embeds, real_len)
 
@@ -969,7 +1000,7 @@ class BabelVox:
                 raw_logits, temperature=temperature, top_k=top_k, top_p=top_p)
 
             if code_0 == self.codec_eos_id:
-                print(f"  EOS at step {step}")
+                logger.debug("EOS at step %d", step)
                 break
 
             generated_ids.append(code_0)
@@ -1036,23 +1067,23 @@ class BabelVox:
 
             if (step + 1) % 50 == 0:
                 elapsed = time.time() - t0
-                print(f"  Step {step+1}/{max_new_tokens} ({elapsed:.1f}s)")
+                logger.debug("Step %d/%d (%.1fs)", step+1, max_new_tokens, elapsed)
 
         elapsed = time.time() - t0
         n_frames = len(all_codes)
         hit_eos = (n_frames < max_new_tokens)
-        print(f"Generated {n_frames} codec frames in {elapsed:.1f}s"
-              f"{'' if hit_eos else ' (no EOS, hit ceiling)'}")
+        logger.info("Generated %d codec frames in %.1fs%s",
+                    n_frames, elapsed, "" if hit_eos else " (no EOS, hit ceiling)")
         if n_frames > 0:
             audio_secs = n_frames / 12.0
-            print(f"  {audio_secs:.1f}s audio, RTF={elapsed/audio_secs:.1f}x")
+            logger.info("  %.1fs audio, RTF=%.1fx", audio_secs, elapsed/audio_secs)
 
         if n_frames == 0:
-            print("WARNING: No audio generated")
+            logger.warning("No audio generated")
             return np.zeros(1, dtype=np.float32), 24000
 
         # --- Decode audio codes -> waveform ---
-        print("Decoding audio codes to waveform...")
+        logger.debug("Decoding audio codes to waveform...")
         codes = np.array(all_codes, dtype=np.int64).T[np.newaxis, :, :]  # (1, 16, T)
         wav = self._decode_audio(codes)
 
