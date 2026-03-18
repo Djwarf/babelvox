@@ -54,6 +54,8 @@ def main():
                              "(e.g. '64,128,256'). Picks smallest bucket per step.")
     parser.add_argument("--cache-dir", default=None,
                         help="OpenVINO model cache directory (avoids recompilation)")
+    parser.add_argument("--fallback-cpu", action="store_true",
+                        help="Fall back to CPU if NPU compilation fails for a model")
     parser.add_argument("--serve", action="store_true",
                         help="Start HTTP server instead of generating once")
     parser.add_argument("--host", default="0.0.0.0",
@@ -79,6 +81,7 @@ def main():
         talker_buckets=talker_buckets,
         precision=precision,
         cache_dir=args.cache_dir,
+        fallback_cpu=args.fallback_cpu,
     )
 
     if args.serve:

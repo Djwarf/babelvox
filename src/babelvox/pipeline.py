@@ -114,9 +114,11 @@ class BabelVox:
                  use_cp_kv_cache=False,
                  talker_buckets=None,
                  precision="fp16",
-                 cache_dir=None):
+                 cache_dir=None,
+                 fallback_cpu=False):
         self.device = device
         self.is_npu = (device == "NPU")
+        self.fallback_cpu = fallback_cpu
         self.use_kv_cache = use_kv_cache
         self.max_kv_len = max_kv_len
         self.use_cp_kv_cache = use_cp_kv_cache
@@ -157,6 +159,14 @@ class BabelVox:
         if cache_dir is not None:
             core.set_property({"CACHE_DIR": cache_dir})
             print(f"  OpenVINO model cache: {cache_dir}")
+
+        if self.is_npu:
+            try:
+                npu_name = core.get_property("NPU", "FULL_DEVICE_NAME")
+                print(f"  NPU device: {npu_name}")
+            except Exception:
+                pass
+
         t0 = time.time()
 
         self.cp_on_cpu = False
@@ -185,6 +195,9 @@ class BabelVox:
                 os.path.join(model_dir, "tokenizer_decoder.xml"), device)
 
         print(f"  OpenVINO models compiled in {time.time() - t0:.1f}s")
+        if self.is_npu and cache_dir is None:
+            print("  TIP: Use --cache-dir ./ov_cache to cache compiled models "
+                  "for instant startup next time.", flush=True)
 
         # Load numpy weights (embeddings + projections)
         print("Loading numpy weights...")
@@ -235,13 +248,26 @@ class BabelVox:
             for i in range(self.num_code_groups - 1)
         ]
 
+    def _compile_npu(self, core, model, name):
+        """Compile a model for NPU, with optional fallback to CPU on failure."""
+        try:
+            return core.compile_model(model, "NPU"), "NPU"
+        except Exception as e:
+            if self.fallback_cpu:
+                print(f"    WARNING: NPU compilation failed for {name}: {e}",
+                      flush=True)
+                print(f"    Falling back to CPU for {name}.", flush=True)
+                return core.compile_model(model, "CPU"), "CPU"
+            raise
+
     def _load_npu_models(self, core, export_dir):
         """Read, reshape to fixed dims, and compile each model for NPU."""
+        print("    Compiling speaker encoder for NPU...", flush=True)
         t1 = time.time()
         m = core.read_model(os.path.join(export_dir, "speaker_encoder.xml"))
         m.reshape({"mel_spectrogram": [1, self.max_speaker_frames, 128]})
-        self.speaker_enc = core.compile_model(m, "NPU")
-        print(f"    Speaker encoder: {time.time()-t1:.1f}s (NPU)")
+        self.speaker_enc, dev = self._compile_npu(core, m, "speaker_encoder")
+        print(f"    Speaker encoder: {time.time()-t1:.1f}s ({dev})")
 
         if self.use_kv_cache:
             t1 = time.time()
@@ -249,6 +275,7 @@ class BabelVox:
                 os.path.join(export_dir, "talker_prefill.xml"), "CPU")
             print(f"    Talker prefill:  {time.time()-t1:.1f}s (CPU)")
 
+            print("    Compiling talker decode for NPU...", flush=True)
             t1 = time.time()
             m = core.read_model(os.path.join(export_dir, "talker_decode.xml"))
             m.reshape({
@@ -259,32 +286,40 @@ class BabelVox:
                 "past_keys": [28, 1, 8, self.max_kv_len, 128],
                 "past_values": [28, 1, 8, self.max_kv_len, 128],
             })
-            self.talker_decode = core.compile_model(m, "NPU")
-            print(f"    Talker decode:   {time.time()-t1:.1f}s (NPU, kv_len={self.max_kv_len})")
+            self.talker_decode, dev = self._compile_npu(core, m, "talker_decode")
+            print(f"    Talker decode:   {time.time()-t1:.1f}s ({dev}, kv_len={self.max_kv_len})")
         else:
             talker_xml = os.path.join(export_dir, "talker.xml")
             if self.talker_bucket_sizes:
                 # Multi-bucket: compile at each size for dynamic shape selection
+                print(f"    Compiling talker at {len(self.talker_bucket_sizes)} "
+                      f"bucket sizes: {self.talker_bucket_sizes}", flush=True)
+                print(f"    (First compilation can take several minutes per bucket "
+                      f"depending on hardware.)", flush=True)
                 self.talker_buckets = {}
                 for bsize in self.talker_bucket_sizes:
+                    print(f"    Compiling talker @{bsize}...", flush=True)
                     t1 = time.time()
                     m = core.read_model(talker_xml)
                     m.reshape({
                         "inputs_embeds": [1, bsize, 1024],
                         "position_ids": [3, 1, bsize],
                     })
-                    self.talker_buckets[bsize] = core.compile_model(m, "NPU")
-                    print(f"    Talker @{bsize:3d}:     {time.time()-t1:.1f}s (NPU)")
+                    self.talker_buckets[bsize], dev = self._compile_npu(
+                        core, m, f"talker@{bsize}")
+                    print(f"    Talker @{bsize:3d}:     {time.time()-t1:.1f}s ({dev})")
                 self.max_talker_seq = max(self.talker_bucket_sizes)
             else:
+                print(f"    Compiling talker (seq={self.max_talker_seq}) for NPU...",
+                      flush=True)
                 t1 = time.time()
                 m = core.read_model(talker_xml)
                 m.reshape({
                     "inputs_embeds": [1, self.max_talker_seq, 1024],
                     "position_ids": [3, 1, self.max_talker_seq],
                 })
-                self.talker = core.compile_model(m, "NPU")
-                print(f"    Talker (28L):    {time.time()-t1:.1f}s (NPU)")
+                self.talker, dev = self._compile_npu(core, m, "talker")
+                print(f"    Talker (28L):    {time.time()-t1:.1f}s ({dev})")
 
         t1 = time.time()
         if self.use_cp_kv_cache:
@@ -299,11 +334,12 @@ class BabelVox:
             print(f"    Code predictor:  {time.time()-t1:.1f}s (CPU - hybrid)")
         self.cp_on_cpu = True
 
+        print("    Compiling tokenizer decoder for NPU...", flush=True)
         t1 = time.time()
         m = core.read_model(os.path.join(export_dir, "tokenizer_decoder.xml"))
         m.reshape({"codes": [1, 16, self.max_decoder_frames]})
-        self.tok_decoder = core.compile_model(m, "NPU")
-        print(f"    Tok decoder:     {time.time()-t1:.1f}s (NPU)")
+        self.tok_decoder, dev = self._compile_npu(core, m, "tokenizer_decoder")
+        print(f"    Tok decoder:     {time.time()-t1:.1f}s ({dev})")
 
     # ----------------------------------------------------------
     # Numpy embedding/projection helpers
