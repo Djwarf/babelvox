@@ -3,6 +3,12 @@ from importlib.metadata import PackageNotFoundError, version
 
 from babelvox.pipeline import BabelVox, download_models, mel_spectrogram_np
 from babelvox.server import serve
+from babelvox.speakers import (
+    SpeakerLibrary,
+    SpeakerProfile,
+    interpolate_speakers,
+    mix_speakers,
+)
 from babelvox.text import preprocess_text
 
 try:
@@ -11,4 +17,5 @@ except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = ["BabelVox", "download_models", "mel_spectrogram_np", "serve",
-           "preprocess_text"]
+           "preprocess_text", "SpeakerProfile", "SpeakerLibrary",
+           "mix_speakers", "interpolate_speakers"]

@@ -80,6 +80,9 @@ def validate_tts_params(body, audio_dir=None):
     if body.get("ssml"):
         kwargs["ssml"] = True
 
+    if "speaker" in body and body["speaker"]:
+        kwargs["speaker"] = body["speaker"]
+
     # Validate numeric parameters
     for key in ("max_new_tokens", "top_k"):
         if key in body:
@@ -181,15 +184,34 @@ def _make_handler(tts, cors_origin="*", audio_dir=None):
             elif parsed.path == "/tts/stream":
                 handle_sse_stream(self, tts, cors_origin=cors_origin,
                                   audio_dir=audio_dir)
+            elif parsed.path == "/speakers":
+                profiles = tts.speaker_library.list_profiles() if tts.speaker_library else []
+                _json_response(self, 200, profiles, cors_origin)
             else:
                 _json_response(self, 404, {"error": "not found"}, cors_origin)
 
         def do_POST(self):
-            if self.path != "/tts":
+            parsed = urlparse(self.path)
+            if parsed.path == "/tts":
+                handle_tts_request(self, tts, cors_origin=cors_origin,
+                                   audio_dir=audio_dir)
+            elif parsed.path == "/speakers":
+                handle_save_speaker(self, tts, cors_origin=cors_origin,
+                                    audio_dir=audio_dir)
+            elif parsed.path == "/tts/batch":
+                handle_batch_request(self, tts, cors_origin=cors_origin,
+                                     audio_dir=audio_dir)
+            else:
                 _json_response(self, 404, {"error": "not found"}, cors_origin)
-                return
-            handle_tts_request(self, tts, cors_origin=cors_origin,
-                               audio_dir=audio_dir)
+
+        def do_DELETE(self):
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/speakers/"):
+                name = parsed.path[len("/speakers/"):]
+                handle_delete_speaker(self, tts, name,
+                                      cors_origin=cors_origin)
+            else:
+                _json_response(self, 404, {"error": "not found"}, cors_origin)
 
         def log_message(self, format, *args):
             logger.info(args[0])
@@ -199,16 +221,8 @@ def _make_handler(tts, cors_origin="*", audio_dir=None):
 
 def handle_tts_request(handler, tts, cors_origin="*", audio_dir=None):
     """Parse JSON request body, call tts.generate(), return WAV response."""
-    length = int(handler.headers.get("Content-Length", 0))
-    if length > MAX_REQUEST_BYTES:
-        _json_response(handler, 413, {"error": "request body too large"},
-                       cors_origin)
-        return
-
-    try:
-        body = json.loads(handler.rfile.read(length)) if length else {}
-    except (json.JSONDecodeError, ValueError):
-        _json_response(handler, 400, {"error": "invalid JSON"}, cors_origin)
+    body, err = _read_json_body(handler, cors_origin)
+    if err:
         return
 
     kwargs, error = validate_tts_params(body, audio_dir=audio_dir)
@@ -227,15 +241,124 @@ def handle_tts_request(handler, tts, cors_origin="*", audio_dir=None):
     _wav_response(handler, wav, sr, cors_origin)
 
 
+def _read_json_body(handler, cors_origin="*"):
+    """Read and parse JSON request body. Returns (body, None) or (None, sent_error)."""
+    length = int(handler.headers.get("Content-Length", 0))
+    if length > MAX_REQUEST_BYTES:
+        _json_response(handler, 413, {"error": "request body too large"}, cors_origin)
+        return None, True
+    try:
+        body = json.loads(handler.rfile.read(length)) if length else {}
+    except (json.JSONDecodeError, ValueError):
+        _json_response(handler, 400, {"error": "invalid JSON"}, cors_origin)
+        return None, True
+    return body, None
+
+
+def handle_save_speaker(handler, tts, cors_origin="*", audio_dir=None):
+    """Handle POST /speakers — save a new speaker profile."""
+    body, err = _read_json_body(handler, cors_origin)
+    if err:
+        return
+
+    name = body.get("name", "").strip()
+    if not name:
+        _json_response(handler, 400, {"error": "missing required field: name"}, cors_origin)
+        return
+
+    ref_audio = body.get("ref_audio", "")
+    if not ref_audio:
+        _json_response(handler, 400, {"error": "missing required field: ref_audio"}, cors_origin)
+        return
+
+    # Path traversal protection
+    ref_path = os.path.realpath(ref_audio)
+    if audio_dir is not None:
+        allowed = os.path.realpath(audio_dir)
+        if not ref_path.startswith(allowed + os.sep):
+            _json_response(handler, 400, {"error": "ref_audio path not allowed"}, cors_origin)
+            return
+    if not os.path.isfile(ref_path):
+        _json_response(handler, 400, {"error": "ref_audio file not found"}, cors_origin)
+        return
+
+    if tts.speaker_library is None:
+        _json_response(handler, 500, {"error": "speaker library not configured"}, cors_origin)
+        return
+
+    metadata = {}
+    for key in ("description", "language", "gender", "tags"):
+        if key in body:
+            metadata[key] = body[key]
+
+    try:
+        profile = tts.save_speaker(name, ref_audio, **metadata)
+        result = {k: v for k, v in profile.__dict__.items() if k != "embedding"}
+        _json_response(handler, 201, result, cors_origin)
+    except Exception:
+        logger.exception("Failed to save speaker")
+        _json_response(handler, 500, {"error": "internal server error"}, cors_origin)
+
+
+def handle_delete_speaker(handler, tts, name, cors_origin="*"):
+    """Handle DELETE /speakers/{name}."""
+    if tts.speaker_library is None:
+        _json_response(handler, 500, {"error": "speaker library not configured"}, cors_origin)
+        return
+    try:
+        tts.speaker_library.delete(name)
+        _json_response(handler, 200, {"status": "deleted", "name": name}, cors_origin)
+    except FileNotFoundError:
+        _json_response(handler, 404, {"error": f"speaker not found: {name}"}, cors_origin)
+
+
+def handle_batch_request(handler, tts, cors_origin="*", audio_dir=None):
+    """Handle POST /tts/batch — synthesize multiple texts."""
+    body, err = _read_json_body(handler, cors_origin)
+    if err:
+        return
+
+    items = body.get("items", [])
+    if not items or not isinstance(items, list):
+        _json_response(handler, 400, {"error": "missing or empty 'items' array"}, cors_origin)
+        return
+
+    results = []
+    for i, item in enumerate(items):
+        kwargs, error = validate_tts_params(item, audio_dir=audio_dir)
+        if error:
+            results.append({"index": i, "error": error})
+            continue
+        try:
+            wav, sr = tts.generate(**kwargs)
+            buf = io.BytesIO()
+            sf.write(buf, wav, sr, format="WAV")
+            audio_b64 = base64.b64encode(buf.getvalue()).decode()
+            results.append({
+                "index": i,
+                "audio": audio_b64,
+                "duration_secs": round(len(wav) / sr, 2),
+            })
+        except Exception:
+            logger.exception("Batch item %d failed", i)
+            results.append({"index": i, "error": "generation failed"})
+
+    _json_response(handler, 200, {"results": results}, cors_origin)
+
+
 def serve(tts, host="0.0.0.0", port=8765, cors_origin="*", audio_dir=None):
     """Start HTTP server wrapping a BabelVox instance."""
     handler_class = _make_handler(tts, cors_origin=cors_origin,
                                   audio_dir=audio_dir)
     server = HTTPServer((host, port), handler_class)
     logger.info("BabelVox server listening on http://%s:%d", host, port)
-    logger.info("  POST /tts        - synthesize speech")
-    logger.info("  GET  /tts/stream - streaming SSE")
-    logger.info("  GET  /health     - health check")
+    logger.info("  POST /tts          - synthesize speech")
+    logger.info("  POST /tts/batch    - batch synthesis")
+    logger.info("  GET  /tts/stream   - streaming SSE")
+    logger.info("  GET  /speakers     - list speaker profiles")
+    logger.info("  POST /speakers     - save speaker profile")
+    logger.info("  DELETE /speakers/X - delete speaker profile")
+    logger.info("  GET  /health       - health check")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

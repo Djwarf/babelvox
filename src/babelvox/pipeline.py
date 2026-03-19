@@ -136,6 +136,7 @@ class BabelVox:
         self.max_decoder_frames = max_decoder_frames
         self.precision = precision
         self.default_speaker = None  # set to a (1, 1024) numpy array for voice persistence
+        self.speaker_library = None  # set to a SpeakerLibrary for named speaker lookup
 
         # Auto-download models if no export_dir provided or dir doesn't exist
         if export_dir is None:
@@ -403,6 +404,20 @@ class BabelVox:
             result = self.speaker_enc({"mel_spectrogram": mel_np})
 
         return result[0]  # numpy (1, 1024)
+
+    def save_speaker(self, name, ref_audio, **metadata):
+        """Extract speaker embedding from audio and save as a named profile."""
+        from datetime import datetime, timezone
+
+        from babelvox.speakers import SpeakerProfile
+        if self.speaker_library is None:
+            raise ValueError("speaker_library not set")
+        embedding = self.extract_speaker_embedding(ref_audio)
+        profile = SpeakerProfile(
+            name=name, embedding=embedding, source_audio=ref_audio,
+            created_at=datetime.now(timezone.utc).isoformat(), **metadata)
+        self.speaker_library.save(profile)
+        return profile
 
     # ----------------------------------------------------------
     # Prefill embedding construction
@@ -673,7 +688,7 @@ class BabelVox:
     # Streaming generation
     # ----------------------------------------------------------
     def generate_stream(self, text, language="English", ref_audio=None,
-                        ref_text=None, speaker_embed=None,
+                        ref_text=None, speaker_embed=None, speaker=None,
                         max_new_tokens=512, temperature=0.9, top_k=50,
                         top_p=1.0, repetition_penalty=1.05,
                         subtalker_temperature=0.9, subtalker_top_k=50,
@@ -712,7 +727,7 @@ class BabelVox:
         try:
             yield from self._generate_stream_locked(
                 text, language, ref_audio, ref_text, speaker_embed,
-                max_new_tokens, temperature, top_k, top_p,
+                speaker, max_new_tokens, temperature, top_k, top_p,
                 repetition_penalty, subtalker_temperature, subtalker_top_k,
                 subtalker_top_p, chunk_frames, min_chunk_frames,
                 max_chunk_frames, split_on_silence, silence_threshold,
@@ -722,7 +737,7 @@ class BabelVox:
 
     def _generate_stream_locked(
             self, text, language, ref_audio, ref_text, speaker_embed,
-            max_new_tokens, temperature, top_k, top_p,
+            speaker, max_new_tokens, temperature, top_k, top_p,
             repetition_penalty, subtalker_temperature, subtalker_top_k,
             subtalker_top_p, chunk_frames, min_chunk_frames,
             max_chunk_frames, split_on_silence, silence_threshold,
@@ -745,6 +760,11 @@ class BabelVox:
             effective_max = min(max_new_tokens, talker_limit, decoder_limit)
             if effective_max < max_new_tokens:
                 max_new_tokens = effective_max
+
+        if speaker is not None and speaker_embed is None:
+            if self.speaker_library is None:
+                raise ValueError("speaker_library not set; cannot look up named speaker")
+            speaker_embed = self.speaker_library.load(speaker).embedding
 
         if ref_audio is not None:
             speaker_embed = self.extract_speaker_embedding(ref_audio)
@@ -925,7 +945,7 @@ class BabelVox:
     # Main generation loop
     # ----------------------------------------------------------
     def generate(self, text, language="English", ref_audio=None,
-                 ref_text=None, speaker_embed=None,
+                 ref_text=None, speaker_embed=None, speaker=None,
                  max_new_tokens=512, temperature=0.9, top_k=50, top_p=1.0,
                  repetition_penalty=1.05, subtalker_temperature=0.9,
                  subtalker_top_k=50, subtalker_top_p=1.0, ssml=False,
@@ -944,15 +964,15 @@ class BabelVox:
         with self._inference_lock:
             return self._generate_locked(
                 text, language, ref_audio, ref_text, speaker_embed,
-                max_new_tokens, temperature, top_k, top_p,
+                speaker, max_new_tokens, temperature, top_k, top_p,
                 repetition_penalty, subtalker_temperature, subtalker_top_k,
                 subtalker_top_p, ssml, cancel_event)
 
     def _generate_locked(self, text, language, ref_audio, ref_text,
-                         speaker_embed, max_new_tokens, temperature, top_k,
-                         top_p, repetition_penalty, subtalker_temperature,
-                         subtalker_top_k, subtalker_top_p, ssml,
-                         cancel_event):
+                         speaker_embed, speaker, max_new_tokens, temperature,
+                         top_k, top_p, repetition_penalty,
+                         subtalker_temperature, subtalker_top_k,
+                         subtalker_top_p, ssml, cancel_event):
         """Inner method that runs while holding the inference lock."""
 
         # Clamp max_new_tokens for device limits
@@ -973,7 +993,12 @@ class BabelVox:
                              max_new_tokens, effective_max)
                 max_new_tokens = effective_max
 
-        # Speaker embedding: ref_audio > explicit speaker_embed > default_speaker
+        # Speaker: named > ref_audio > explicit embed > default
+        if speaker is not None and speaker_embed is None:
+            if self.speaker_library is None:
+                raise ValueError("speaker_library not set; cannot look up named speaker")
+            speaker_embed = self.speaker_library.load(speaker).embedding
+
         if ref_audio is not None:
             logger.info("Extracting speaker embedding...")
             speaker_embed = self.extract_speaker_embedding(ref_audio)

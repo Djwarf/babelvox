@@ -70,6 +70,14 @@ def main():
     parser.add_argument("--ws-port", type=int, default=None,
                         help="WebSocket server port (enables WS alongside HTTP "
                              "when --serve is used, requires babelvox[ws])")
+    parser.add_argument("--speaker", default=None,
+                        help="Use a named speaker profile")
+    parser.add_argument("--speaker-dir", default=None,
+                        help="Speaker library directory (default: ~/.babelvox/speakers)")
+    parser.add_argument("--save-speaker", default=None, metavar="NAME",
+                        help="Extract speaker from --ref-audio and save as NAME")
+    parser.add_argument("--list-speakers", action="store_true",
+                        help="List saved speaker profiles and exit")
     parser.add_argument("--ssml", action="store_true",
                         help="Treat --text as SSML markup")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -101,6 +109,27 @@ def main():
         fallback_cpu=args.fallback_cpu,
     )
 
+    # Speaker library setup
+    from babelvox.speakers import SpeakerLibrary
+    speaker_dir = args.speaker_dir or os.path.expanduser("~/.babelvox/speakers")
+    tts.speaker_library = SpeakerLibrary(speaker_dir)
+
+    if args.list_speakers:
+        profiles = tts.speaker_library.list_profiles()
+        if not profiles:
+            print("No saved speaker profiles.")
+        for p in profiles:
+            print(f"  {p['name']:20s} {p.get('language', ''):10s} {p.get('description', '')}")
+        return
+
+    if args.save_speaker:
+        if not args.ref_audio:
+            parser.error("--save-speaker requires --ref-audio")
+        profile = tts.save_speaker(args.save_speaker, args.ref_audio,
+                                   language=args.language)
+        print(f"Saved speaker '{profile.name}'")
+        return
+
     if args.serve:
         from babelvox.server import serve
         if args.ws_port:
@@ -122,6 +151,7 @@ def main():
             language=args.language,
             ref_audio=args.ref_audio,
             ref_text=args.ref_text,
+            speaker=args.speaker,
             max_new_tokens=args.max_tokens,
             temperature=0.9,
             top_k=50,

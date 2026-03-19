@@ -76,6 +76,53 @@ babelvox --int8 --cp-kv-cache --ref-audio reference.wav \
   --text "This sounds like someone else." --output cloned.wav
 ```
 
+### Speaker profiles
+
+Save, load, and reuse named speaker voices across sessions:
+
+```python
+from babelvox import BabelVox, SpeakerLibrary
+
+tts = BabelVox(precision="int8", use_cp_kv_cache=True)
+tts.speaker_library = SpeakerLibrary("~/.babelvox/speakers")
+
+# Save a speaker from reference audio
+tts.save_speaker("alice", "alice.wav", language="English", gender="female")
+
+# Use by name
+wav, sr = tts.generate("Hello from Alice", speaker="alice")
+```
+
+```bash
+babelvox --save-speaker alice --ref-audio alice.wav --language English
+babelvox --speaker alice --text "Hello from Alice" -o hello.wav
+babelvox --list-speakers
+```
+
+Mix or interpolate voices:
+
+```python
+from babelvox import mix_speakers, interpolate_speakers
+
+lib = tts.speaker_library
+a = lib.load("alice").embedding
+b = lib.load("bob").embedding
+mixed = mix_speakers([a, b], [0.7, 0.3])      # 70% alice, 30% bob
+blended = interpolate_speakers(a, b, 0.5)      # 50/50 blend
+wav, sr = tts.generate("Hello", speaker_embed=mixed)
+```
+
+**Server API:**
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/speakers` | List all saved speaker profiles |
+| `POST` | `/speakers` | Save a speaker (`{"name": "alice", "ref_audio": "..."}`) |
+| `DELETE` | `/speakers/{name}` | Delete a speaker profile |
+| `POST` | `/tts/batch` | Batch synthesis (`{"items": [{"text": "...", "speaker": "..."}]}`) |
+
+Use `"speaker": "alice"` in POST /tts to synthesize with a saved voice.
+
 ### Voice persistence
 
 Without a reference audio, each `generate()` call may produce a different voice. To keep a consistent voice across multiple calls:
@@ -455,6 +502,10 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--language` | English | Language for synthesis |
 | `--ref-audio` | none | Reference audio for voice cloning |
 | `--ref-text` | none | Transcription of reference audio (improves cloning) |
+| `--speaker` | none | Use a named speaker profile |
+| `--speaker-dir` | `~/.babelvox/speakers` | Speaker library directory |
+| `--save-speaker` | none | Save speaker from `--ref-audio` as named profile |
+| `--list-speakers` | off | List saved speaker profiles and exit |
 | `--serve` | off | Start HTTP server instead of generating once |
 | `--host` | `0.0.0.0` | Server bind address |
 | `--port` | `8765` | Server port |
