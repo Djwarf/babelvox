@@ -123,6 +123,71 @@ wav, sr = tts.generate("Hello", speaker_embed=mixed)
 
 Use `"speaker": "alice"` in POST /tts to synthesize with a saved voice.
 
+### Prosody & emotion control
+
+Control speech rate, pitch, volume, and emotion style:
+
+```python
+from babelvox import ProsodyConfig
+
+prosody = ProsodyConfig(rate=1.2, pitch_semitones=2, volume=0.8, emotion="happy")
+wav, sr = tts.generate("This is exciting news!", prosody=prosody)
+```
+
+```bash
+babelvox --emotion happy --rate 1.2 --pitch 2 --text "Exciting news!" -o happy.wav
+babelvox --rate 0.8 --volume 0.5 --text "Slow and quiet" -o slow.wav
+```
+
+**Emotion styles:** `happy`, `sad`, `angry`, `surprised`, `neutral`. Emotion hints are best-effort (text manipulation + sampling adjustment). Rate, pitch, and volume are guaranteed via librosa post-processing.
+
+**Server API:**
+```json
+POST /tts
+{"text": "Hello!", "prosody": {"emotion": "happy", "rate": 1.2, "pitch_semitones": 2}}
+```
+
+### Long-form synthesis
+
+Synthesize books, articles, or long texts with automatic segmentation, crossfade, and progress tracking:
+
+```python
+from babelvox import LongFormSynthesizer
+
+synth = LongFormSynthesizer(tts)
+result = synth.synthesize(long_text, strategy="natural", speaker="alice")
+sf.write("book.wav", result.waveform, result.sample_rate)
+
+# Access per-segment timestamps
+for seg in result.segments:
+    print(f"  [{seg.start_time:.1f}s] {seg.segment.text[:50]}...")
+```
+
+```bash
+# From a text file with chapter detection
+babelvox --longform --strategy chapter --speaker alice \
+  --text-file book.txt --timestamps -o book.wav
+
+# Split into individual segment files
+babelvox --longform --split-output --text-file article.txt -o article.wav
+```
+
+**Segmentation strategies:**
+
+| Strategy | Behavior |
+|---|---|
+| `paragraph` | Split on double newlines |
+| `sentence` | Split on sentence-ending punctuation (handles abbreviations) |
+| `natural` (default) | Paragraphs first, split long paragraphs (>300 chars) into sentences |
+| `chapter` | Split on markdown headers (`# Chapter`, `## Section`); headers become timestamps |
+
+**Server API:**
+```bash
+curl -X POST http://localhost:8765/tts/longform \
+  -d '{"text": "Para one.\n\nPara two.", "strategy": "natural", "speaker": "alice"}' \
+  -o longform.wav
+```
+
 ### Voice persistence
 
 Without a reference audio, each `generate()` call may produce a different voice. To keep a consistent voice across multiple calls:
@@ -232,9 +297,9 @@ babelvox --ssml --text '<speak>Hello.<break time="500ms"/>World.</speak>' -o out
 | `<break strength="strong"/>` | Insert pause by strength level |
 | `<sub alias="...">` | Replace text with alias |
 | `<say-as interpret-as="number\|date\|time\|telephone\|spell-out">` | Normalize to spoken form |
-| `<emphasis>`, `<prosody>`, `<phoneme>` | Parsed (effects coming in v0.11.0) |
+| `<emphasis>`, `<prosody>`, `<phoneme>` | Parsed into annotations (best-effort prosody hints) |
 
-Onomatopoeia (boom, crash, sizzle, etc.) is also detected and annotated for future prosody control.
+Onomatopoeia (boom, crash, sizzle, etc.) is detected and annotated for prosody emphasis.
 
 ### 10 languages
 
@@ -295,7 +360,13 @@ audio.play();
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/tts` | Synthesize speech — JSON body in, WAV bytes out |
+| `POST` | `/tts/batch` | Batch synthesis — multiple texts in one request |
+| `POST` | `/tts/longform` | Long-form synthesis — auto-segmented, single WAV out |
 | `GET` | `/tts/stream` | Streaming SSE — audio chunks as base64 events |
+| `GET` | `/tts/longform/stream` | Long-form SSE — per-segment progress + audio |
+| `GET` | `/speakers` | List saved speaker profiles |
+| `POST` | `/speakers` | Save a new speaker profile |
+| `DELETE` | `/speakers/{name}` | Delete a speaker profile |
 | `GET` | `/health` | Health check — returns `{"status": "ok"}` |
 
 **POST /tts request body:**
@@ -312,6 +383,8 @@ audio.play();
 | `top_p` | no | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | no | `1.05` | Penalty for repeated tokens |
 | `ssml` | no | `false` | Treat `text` as SSML markup |
+| `speaker` | no | `null` | Named speaker profile |
+| `prosody` | no | `null` | Prosody object: `{"rate": 1.0, "pitch_semitones": 0, "volume": 1.0, "emotion": null}` |
 
 ### SSE streaming
 
@@ -389,6 +462,8 @@ path = download_models()  # downloads ~2.5 GB to HuggingFace cache
 | `top_p` | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | `1.05` | Penalty for repeated tokens |
 | `ssml` | `False` | Treat `text` as SSML markup |
+| `speaker` | `None` | Named speaker profile (requires `speaker_library` set) |
+| `prosody` | `None` | `ProsodyConfig` for rate/pitch/volume/emotion control |
 
 **`tts.generate_stream(text, language, ..., chunk_frames=12)`** — same args as `generate()`, plus:
 
@@ -406,6 +481,21 @@ Yields `(waveform_chunk, 24000)` tuples as audio is generated.
 **`tts.extract_speaker_embedding(audio_path)`** returns numpy array `(1, 1024)`
 
 **`tts.default_speaker`** — set to a speaker embedding for consistent voice across calls
+
+**`tts.save_speaker(name, ref_audio, **metadata)`** — extract embedding and save as named profile
+
+**`LongFormSynthesizer(tts).synthesize(text, strategy, speaker, ...)`** returns `SynthesisResult`
+
+| Parameter | Default | Description |
+|---|---|---|
+| `text` | required | Long text to synthesize |
+| `strategy` | `"natural"` | `"paragraph"`, `"sentence"`, `"natural"`, or `"chapter"` |
+| `speaker` | `None` | Named speaker profile for voice consistency |
+| `language` | `"English"` | Language for synthesis |
+| `prosody` | `None` | `ProsodyConfig` applied to all segments |
+| `crossfade_samples` | `2400` | Overlap samples between segments (100ms) |
+| `progress_callback` | `None` | Called with `SynthesisProgress` after each segment |
+| `resume_from` | `0` | Skip first N segments (for resume) |
 
 ### Exporting models yourself (optional)
 
@@ -510,6 +600,15 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--host` | `0.0.0.0` | Server bind address |
 | `--port` | `8765` | Server port |
 | `--ws-port` | none | WebSocket server port (requires `babelvox[ws]`) |
+| `--rate` | `1.0` | Speech rate multiplier (0.25–4.0) |
+| `--pitch` | `0` | Pitch shift in semitones (-12 to +12) |
+| `--volume` | `1.0` | Volume multiplier (0.0–2.0) |
+| `--emotion` | none | Emotion style: happy, sad, angry, surprised, neutral |
+| `--longform` | off | Enable long-form synthesis mode |
+| `--strategy` | `natural` | Segmentation: paragraph, sentence, natural, chapter |
+| `--text-file` | none | Read text from file instead of `--text` |
+| `--split-output` | off | Write individual segment files |
+| `--timestamps` | off | Write timestamps JSON alongside audio |
 | `--output` / `-o` | `output.wav` | Output WAV file path |
 | `--export-dir` | auto-download | Directory with exported models (downloads from HuggingFace if not set) |
 | `--model-path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace model (tokenizer) |
