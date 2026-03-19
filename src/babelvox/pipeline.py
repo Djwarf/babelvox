@@ -26,6 +26,8 @@ from librosa.filters import mel as librosa_mel_fn
 from scipy.special import expit as sigmoid
 from transformers import AutoTokenizer
 
+from babelvox.text import preprocess_text
+
 logger = logging.getLogger("babelvox")
 
 DEFAULT_HF_REPO = "djwarf/babelvox-openvino-int8"
@@ -404,13 +406,14 @@ class BabelVox:
     # Prefill embedding construction
     # ----------------------------------------------------------
     def build_prefill_embeds(self, text, language, speaker_embed,
-                             ref_text=None):
+                             ref_text=None, ssml=False):
         """Build the input embedding sequence for the talker prefill.
 
         All operations are pure numpy. Returns (1, T, 1024) arrays.
         When ref_text is provided (transcription of reference audio),
         it is prepended to the sequence for better voice cloning.
         """
+        text = preprocess_text(text, language=language, is_ssml=ssml)
         formatted = f"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n"
         tokens = self.tokenizer(formatted, return_tensors="np", padding=True)
         input_ids = tokens["input_ids"][0]  # 1D array
@@ -418,6 +421,7 @@ class BabelVox:
         # Reference text for voice cloning (prepended to sequence)
         ref_text_embed = None
         if ref_text is not None:
+            ref_text = preprocess_text(ref_text, language=language)
             ref_formatted = f"<|im_start|>assistant\n{ref_text}<|im_end|>\n"
             ref_tokens = self.tokenizer(ref_formatted, return_tensors="np",
                                         padding=True)
@@ -674,7 +678,7 @@ class BabelVox:
                         subtalker_top_p=1.0, chunk_frames=12,
                         min_chunk_frames=None, max_chunk_frames=None,
                         split_on_silence=False, silence_threshold=0.02,
-                        crossfade_samples=1200):
+                        crossfade_samples=1200, ssml=False):
         """Generate speech as a stream of waveform chunks.
 
         Yields (waveform_chunk, sample_rate) tuples. By default, chunks
@@ -725,7 +729,7 @@ class BabelVox:
             speaker_embed = self.default_speaker
 
         prefill_embeds, trailing_text, tts_pad_embed = self.build_prefill_embeds(
-            text, language, speaker_embed, ref_text=ref_text)
+            text, language, speaker_embed, ref_text=ref_text, ssml=ssml)
         prefill_len = prefill_embeds.shape[1]
 
         if self.use_kv_cache:
@@ -899,7 +903,7 @@ class BabelVox:
                  ref_text=None, speaker_embed=None,
                  max_new_tokens=512, temperature=0.9, top_k=50, top_p=1.0,
                  repetition_penalty=1.05, subtalker_temperature=0.9,
-                 subtalker_top_k=50, subtalker_top_p=1.0):
+                 subtalker_top_k=50, subtalker_top_p=1.0, ssml=False):
         """Generate speech from text, optionally cloning a reference voice.
 
         Voice can be specified via ref_audio (path), speaker_embed (numpy
@@ -940,7 +944,7 @@ class BabelVox:
         # Build prefill
         logger.debug("Building prefill embeddings...")
         prefill_embeds, trailing_text, tts_pad_embed = self.build_prefill_embeds(
-            text, language, speaker_embed, ref_text=ref_text)
+            text, language, speaker_embed, ref_text=ref_text, ssml=ssml)
 
         prefill_len = prefill_embeds.shape[1]
         logger.debug("Prefill: %d tokens, trailing text: %d tokens",

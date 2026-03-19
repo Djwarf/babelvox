@@ -67,6 +67,8 @@ def main():
                         help="CORS Allow-Origin header (default: *)")
     parser.add_argument("--audio-dir", default=None,
                         help="Allowed directory for ref_audio paths in server mode")
+    parser.add_argument("--ssml", action="store_true",
+                        help="Treat --text as SSML markup")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -110,6 +112,7 @@ def main():
             max_new_tokens=args.max_tokens,
             temperature=0.9,
             top_k=50,
+            ssml=args.ssml,
         )
 
         # Ensure output directory exists

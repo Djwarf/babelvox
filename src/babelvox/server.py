@@ -96,6 +96,9 @@ def handle_tts_request(handler, tts, cors_origin="*", audio_dir=None):
         if key in body:
             kwargs[key] = body[key]
 
+    if body.get("ssml"):
+        kwargs["ssml"] = True
+
     # Validate numeric parameters
     for key in ("max_new_tokens", "top_k"):
         if key in body:
