@@ -1,6 +1,7 @@
 """BabelVox: Real-time text-to-speech on Intel NPU/CPU via OpenVINO."""
 from importlib.metadata import PackageNotFoundError, version
 
+from babelvox.longform import LongFormSynthesizer, segment_text
 from babelvox.pipeline import BabelVox, download_models, mel_spectrogram_np
 from babelvox.prosody import ProsodyConfig
 from babelvox.server import serve
@@ -19,4 +20,5 @@ except PackageNotFoundError:
 
 __all__ = ["BabelVox", "download_models", "mel_spectrogram_np", "serve",
            "preprocess_text", "SpeakerProfile", "SpeakerLibrary",
-           "mix_speakers", "interpolate_speakers", "ProsodyConfig"]
+           "mix_speakers", "interpolate_speakers", "ProsodyConfig",
+           "LongFormSynthesizer", "segment_text"]

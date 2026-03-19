@@ -208,6 +208,9 @@ def _make_handler(tts, cors_origin="*", audio_dir=None):
             elif parsed.path == "/speakers":
                 profiles = tts.speaker_library.list_profiles() if tts.speaker_library else []
                 _json_response(self, 200, profiles, cors_origin)
+            elif parsed.path == "/tts/longform/stream":
+                handle_longform_sse(self, tts, cors_origin=cors_origin,
+                                    audio_dir=audio_dir)
             else:
                 _json_response(self, 404, {"error": "not found"}, cors_origin)
 
@@ -222,6 +225,9 @@ def _make_handler(tts, cors_origin="*", audio_dir=None):
             elif parsed.path == "/tts/batch":
                 handle_batch_request(self, tts, cors_origin=cors_origin,
                                      audio_dir=audio_dir)
+            elif parsed.path == "/tts/longform":
+                handle_longform_request(self, tts, cors_origin=cors_origin,
+                                        audio_dir=audio_dir)
             else:
                 _json_response(self, 404, {"error": "not found"}, cors_origin)
 
@@ -367,19 +373,116 @@ def handle_batch_request(handler, tts, cors_origin="*", audio_dir=None):
     _json_response(handler, 200, {"results": results}, cors_origin)
 
 
+def handle_longform_request(handler, tts, cors_origin="*", audio_dir=None):
+    """Handle POST /tts/longform — synthesize long text as single WAV."""
+    from babelvox.longform import LongFormSynthesizer
+
+    body, err = _read_json_body(handler, cors_origin)
+    if err:
+        return
+
+    text = body.get("text", "")
+    if isinstance(text, str):
+        text = text.strip()
+    if not text:
+        _json_response(handler, 400, {"error": "missing required field: text"}, cors_origin)
+        return
+
+    strategy = body.get("strategy", "natural")
+    language = body.get("language", "English")
+    speaker = body.get("speaker")
+    crossfade = int(body.get("crossfade_samples", 2400))
+    max_tokens = int(body.get("max_new_tokens", 512))
+
+    prosody = None
+    if "prosody" in body and isinstance(body["prosody"], dict):
+        from babelvox.prosody import ProsodyConfig
+        p = body["prosody"]
+        prosody = ProsodyConfig(
+            rate=float(p.get("rate", 1.0)),
+            pitch_semitones=float(p.get("pitch_semitones", 0)),
+            volume=float(p.get("volume", 1.0)),
+            emotion=p.get("emotion"),
+        )
+
+    try:
+        synth = LongFormSynthesizer(tts)
+        result = synth.synthesize(
+            text, strategy=strategy, speaker=speaker,
+            language=language, prosody=prosody,
+            crossfade_samples=crossfade, max_new_tokens=max_tokens)
+        _wav_response(handler, result.waveform, result.sample_rate, cors_origin)
+    except Exception:
+        logger.exception("Long-form synthesis failed")
+        _json_response(handler, 500, {"error": "internal server error"}, cors_origin)
+
+
+def handle_longform_sse(handler, tts, cors_origin="*", audio_dir=None):
+    """Handle GET /tts/longform/stream — SSE with per-segment progress."""
+    from babelvox.longform import LongFormSynthesizer
+
+    parsed = urlparse(handler.path)
+    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+    text = params.get("text", "").strip()
+    if not text:
+        _json_response(handler, 400, {"error": "missing required field: text"}, cors_origin)
+        return
+
+    strategy = params.get("strategy", "natural")
+    language = params.get("language", "English")
+    speaker = params.get("speaker")
+
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "keep-alive")
+    for k, v in _cors_headers(cors_origin).items():
+        handler.send_header(k, v)
+    handler.end_headers()
+
+    fmt = params.get("format", "pcm_s16le")
+
+    try:
+        synth = LongFormSynthesizer(tts)
+        from babelvox.longform import segment_text
+        segments = segment_text(text, strategy)
+        _sse_write(handler, "start", {"total_segments": len(segments), "format": fmt})
+
+        for wav, sr, progress in synth.synthesize_stream(
+                text, strategy=strategy, speaker=speaker, language=language):
+            audio_bytes = encode_chunk(wav, sr, fmt)
+            _sse_write(handler, "segment", base64.b64encode(audio_bytes).decode())
+            _sse_write(handler, "progress", {
+                "completed": progress.completed_segments,
+                "total": progress.total_segments,
+                "audio_secs": round(progress.total_audio_seconds, 2),
+            })
+    except Exception:
+        logger.exception("Long-form SSE failed")
+        _sse_write(handler, "error", {"message": "generation failed"})
+        return
+
+    _sse_write(handler, "done", {
+        "total_duration_secs": round(progress.total_audio_seconds, 2)
+    })
+
+
 def serve(tts, host="0.0.0.0", port=8765, cors_origin="*", audio_dir=None):
     """Start HTTP server wrapping a BabelVox instance."""
     handler_class = _make_handler(tts, cors_origin=cors_origin,
                                   audio_dir=audio_dir)
     server = HTTPServer((host, port), handler_class)
     logger.info("BabelVox server listening on http://%s:%d", host, port)
-    logger.info("  POST /tts          - synthesize speech")
-    logger.info("  POST /tts/batch    - batch synthesis")
-    logger.info("  GET  /tts/stream   - streaming SSE")
-    logger.info("  GET  /speakers     - list speaker profiles")
-    logger.info("  POST /speakers     - save speaker profile")
-    logger.info("  DELETE /speakers/X - delete speaker profile")
-    logger.info("  GET  /health       - health check")
+    logger.info("  POST /tts               - synthesize speech")
+    logger.info("  POST /tts/batch         - batch synthesis")
+    logger.info("  POST /tts/longform      - long-form synthesis")
+    logger.info("  GET  /tts/stream        - streaming SSE")
+    logger.info("  GET  /tts/longform/stream - long-form SSE")
+    logger.info("  GET  /speakers          - list speaker profiles")
+    logger.info("  POST /speakers          - save speaker profile")
+    logger.info("  DELETE /speakers/X      - delete speaker profile")
+    logger.info("  GET  /health            - health check")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

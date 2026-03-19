@@ -89,6 +89,17 @@ def main():
     parser.add_argument("--emotion", default=None,
                         choices=["happy", "sad", "angry", "surprised", "neutral"],
                         help="Emotion style for speech")
+    parser.add_argument("--longform", action="store_true",
+                        help="Enable long-form synthesis mode")
+    parser.add_argument("--strategy", default="natural",
+                        choices=["paragraph", "sentence", "natural", "chapter"],
+                        help="Text segmentation strategy (default: natural)")
+    parser.add_argument("--split-output", action="store_true",
+                        help="Output individual segment files (output_001.wav, ...)")
+    parser.add_argument("--timestamps", action="store_true",
+                        help="Write timestamps JSON alongside audio")
+    parser.add_argument("--text-file", default=None, metavar="PATH",
+                        help="Read text from file instead of --text")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -154,33 +165,81 @@ def main():
         serve(tts, host=args.host, port=args.port,
               cors_origin=args.cors_origin, audio_dir=args.audio_dir)
     else:
-        logger.info("Generating with BabelVox (%s)...", args.device)
+        # Read text from file if specified
+        text = args.text
+        if args.text_file:
+            with open(args.text_file) as f:
+                text = f.read()
+
         prosody = None
         if args.rate != 1.0 or args.pitch != 0.0 or args.volume != 1.0 or args.emotion:
             from babelvox.prosody import ProsodyConfig
             prosody = ProsodyConfig(
                 rate=args.rate, pitch_semitones=args.pitch,
                 volume=args.volume, emotion=args.emotion)
-        wav, sr = tts.generate(
-            text=args.text,
-            language=args.language,
-            ref_audio=args.ref_audio,
-            ref_text=args.ref_text,
-            speaker=args.speaker,
-            max_new_tokens=args.max_tokens,
-            temperature=0.9,
-            top_k=50,
-            ssml=args.ssml,
-            prosody=prosody,
-        )
 
         # Ensure output directory exists
         out_dir = os.path.dirname(args.output)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
 
-        sf.write(args.output, wav, sr)
-        logger.info("Saved to %s (%.2fs @ %dHz)", args.output, len(wav)/sr, sr)
+        if args.longform:
+            from babelvox.longform import LongFormSynthesizer
+            logger.info("Long-form synthesis (%s, %s)...", args.device, args.strategy)
+            synth = LongFormSynthesizer(tts)
+            result = synth.synthesize(
+                text, strategy=args.strategy, speaker=args.speaker,
+                language=args.language, prosody=prosody,
+                max_new_tokens=args.max_tokens)
+
+            sf.write(args.output, result.waveform, result.sample_rate)
+            logger.info("Saved to %s (%.2fs @ %dHz, %d segments)",
+                        args.output, result.total_duration, result.sample_rate,
+                        len(result.segments))
+
+            if args.split_output:
+                base, ext = os.path.splitext(args.output)
+                for sr_item in result.segments:
+                    if sr_item.segment.type == "chapter_marker":
+                        continue
+                    seg_path = f"{base}_{sr_item.segment.index + 1:03d}{ext}"
+                    wav_seg, _ = tts.generate(
+                        text=sr_item.segment.text, language=args.language,
+                        speaker=args.speaker, prosody=prosody,
+                        max_new_tokens=args.max_tokens)
+                    sf.write(seg_path, wav_seg, 24000)
+                    logger.info("  Segment %d: %s", sr_item.segment.index + 1, seg_path)
+
+            if args.timestamps:
+                import json
+                ts_path = os.path.splitext(args.output)[0] + ".timestamps.json"
+                ts_data = [{
+                    "index": sr_item.segment.index,
+                    "type": sr_item.segment.type,
+                    "text": sr_item.segment.text[:100],
+                    "start_time": round(sr_item.start_time, 3),
+                    "end_time": round(sr_item.end_time, 3),
+                    "duration": round(sr_item.duration, 3),
+                } for sr_item in result.segments]
+                with open(ts_path, "w") as f:
+                    json.dump(ts_data, f, indent=2)
+                logger.info("Timestamps: %s", ts_path)
+        else:
+            logger.info("Generating with BabelVox (%s)...", args.device)
+            wav, sr = tts.generate(
+                text=text,
+                language=args.language,
+                ref_audio=args.ref_audio,
+                ref_text=args.ref_text,
+                speaker=args.speaker,
+                max_new_tokens=args.max_tokens,
+                temperature=0.9,
+                top_k=50,
+                ssml=args.ssml,
+                prosody=prosody,
+            )
+            sf.write(args.output, wav, sr)
+            logger.info("Saved to %s (%.2fs @ %dHz)", args.output, len(wav)/sr, sr)
 
 
 if __name__ == "__main__":
