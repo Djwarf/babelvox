@@ -248,6 +248,7 @@ audio.play();
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/tts` | Synthesize speech — JSON body in, WAV bytes out |
+| `GET` | `/tts/stream` | Streaming SSE — audio chunks as base64 events |
 | `GET` | `/health` | Health check — returns `{"status": "ok"}` |
 
 **POST /tts request body:**
@@ -264,6 +265,44 @@ audio.play();
 | `top_p` | no | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | no | `1.05` | Penalty for repeated tokens |
 | `ssml` | no | `false` | Treat `text` as SSML markup |
+
+### SSE streaming
+
+Stream audio chunks in real-time via Server-Sent Events (no extra dependencies):
+
+```bash
+curl -N "http://localhost:8765/tts/stream?text=Hello+world&format=pcm_s16le"
+```
+
+Events: `start` (sample rate + format), `audio` (base64-encoded chunk), `done` (total duration), `error`.
+
+### WebSocket streaming
+
+For bidirectional real-time streaming with cancel support, install the `ws` extra:
+
+```bash
+pip install babelvox[ws]
+babelvox --serve --int8 --cp-kv-cache --port 8765 --ws-port 8766
+```
+
+Connect and send JSON requests, receive binary audio chunks:
+
+```javascript
+const ws = new WebSocket("ws://localhost:8766");
+ws.onopen = () => ws.send(JSON.stringify({ text: "Hello world", format: "pcm_s16le" }));
+ws.onmessage = (e) => {
+  if (typeof e.data === "string") {
+    const msg = JSON.parse(e.data);
+    console.log(msg.event); // "start", "done", or "error"
+  } else {
+    // Binary audio chunk — play with Web Audio API
+  }
+};
+// Cancel mid-stream:
+ws.send(JSON.stringify({ event: "cancel" }));
+```
+
+**Formats:** `pcm_s16le` (raw 16-bit PCM, lowest latency) or `wav_chunks` (each chunk is a complete WAV file).
 
 ### Pre-download models
 
@@ -419,6 +458,7 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--serve` | off | Start HTTP server instead of generating once |
 | `--host` | `0.0.0.0` | Server bind address |
 | `--port` | `8765` | Server port |
+| `--ws-port` | none | WebSocket server port (requires `babelvox[ws]`) |
 | `--output` / `-o` | `output.wav` | Output WAV file path |
 | `--export-dir` | auto-download | Directory with exported models (downloads from HuggingFace if not set) |
 | `--model-path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace model (tokenizer) |

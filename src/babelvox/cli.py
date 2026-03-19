@@ -67,6 +67,9 @@ def main():
                         help="CORS Allow-Origin header (default: *)")
     parser.add_argument("--audio-dir", default=None,
                         help="Allowed directory for ref_audio paths in server mode")
+    parser.add_argument("--ws-port", type=int, default=None,
+                        help="WebSocket server port (enables WS alongside HTTP "
+                             "when --serve is used, requires babelvox[ws])")
     parser.add_argument("--ssml", action="store_true",
                         help="Treat --text as SSML markup")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -100,6 +103,16 @@ def main():
 
     if args.serve:
         from babelvox.server import serve
+        if args.ws_port:
+            import threading
+
+            from babelvox.ws_server import ws_serve
+            ws_thread = threading.Thread(
+                target=ws_serve, args=(tts,),
+                kwargs={"host": args.host, "port": args.ws_port,
+                        "audio_dir": args.audio_dir},
+                daemon=True)
+            ws_thread.start()
         serve(tts, host=args.host, port=args.port,
               cors_origin=args.cors_origin, audio_dir=args.audio_dir)
     else:

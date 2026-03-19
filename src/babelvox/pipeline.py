@@ -17,6 +17,7 @@ correct position (causal attention prevents real tokens from seeing padding).
 import json
 import logging
 import os
+import threading
 import time
 
 import librosa
@@ -121,6 +122,7 @@ class BabelVox:
                  precision="fp16",
                  cache_dir=None,
                  fallback_cpu=False):
+        self._inference_lock = threading.Lock()
         self.device = device
         self.is_npu = (device == "NPU")
         self.fallback_cpu = fallback_cpu
@@ -678,7 +680,8 @@ class BabelVox:
                         subtalker_top_p=1.0, chunk_frames=12,
                         min_chunk_frames=None, max_chunk_frames=None,
                         split_on_silence=False, silence_threshold=0.02,
-                        crossfade_samples=1200, ssml=False):
+                        crossfade_samples=1200, ssml=False,
+                        cancel_event=None):
         """Generate speech as a stream of waveform chunks.
 
         Yields (waveform_chunk, sample_rate) tuples. By default, chunks
@@ -705,6 +708,26 @@ class BabelVox:
         Yields:
             tuple: (waveform_chunk, 24000) for each chunk of audio.
         """
+        self._inference_lock.acquire()
+        try:
+            yield from self._generate_stream_locked(
+                text, language, ref_audio, ref_text, speaker_embed,
+                max_new_tokens, temperature, top_k, top_p,
+                repetition_penalty, subtalker_temperature, subtalker_top_k,
+                subtalker_top_p, chunk_frames, min_chunk_frames,
+                max_chunk_frames, split_on_silence, silence_threshold,
+                crossfade_samples, ssml, cancel_event)
+        finally:
+            self._inference_lock.release()
+
+    def _generate_stream_locked(
+            self, text, language, ref_audio, ref_text, speaker_embed,
+            max_new_tokens, temperature, top_k, top_p,
+            repetition_penalty, subtalker_temperature, subtalker_top_k,
+            subtalker_top_p, chunk_frames, min_chunk_frames,
+            max_chunk_frames, split_on_silence, silence_threshold,
+            crossfade_samples, ssml, cancel_event):
+        """Inner generator that runs while holding the inference lock."""
         if min_chunk_frames is None:
             min_chunk_frames = 6
         if max_chunk_frames is None:
@@ -810,6 +833,8 @@ class BabelVox:
 
         # --- Generation loop with streaming decode ---
         for step in range(max_new_tokens):
+            if cancel_event is not None and cancel_event.is_set():
+                break
             if self.use_kv_cache:
                 if step > 0:
                     logits, hidden, kv_k, kv_v = self._run_talker_decode(
@@ -903,7 +928,8 @@ class BabelVox:
                  ref_text=None, speaker_embed=None,
                  max_new_tokens=512, temperature=0.9, top_k=50, top_p=1.0,
                  repetition_penalty=1.05, subtalker_temperature=0.9,
-                 subtalker_top_k=50, subtalker_top_p=1.0, ssml=False):
+                 subtalker_top_k=50, subtalker_top_p=1.0, ssml=False,
+                 cancel_event=None):
         """Generate speech from text, optionally cloning a reference voice.
 
         Voice can be specified via ref_audio (path), speaker_embed (numpy
@@ -915,6 +941,19 @@ class BabelVox:
             tuple: (waveform_array, sample_rate) where waveform is float32
                    numpy array and sample_rate is 24000.
         """
+        with self._inference_lock:
+            return self._generate_locked(
+                text, language, ref_audio, ref_text, speaker_embed,
+                max_new_tokens, temperature, top_k, top_p,
+                repetition_penalty, subtalker_temperature, subtalker_top_k,
+                subtalker_top_p, ssml, cancel_event)
+
+    def _generate_locked(self, text, language, ref_audio, ref_text,
+                         speaker_embed, max_new_tokens, temperature, top_k,
+                         top_p, repetition_penalty, subtalker_temperature,
+                         subtalker_top_k, subtalker_top_p, ssml,
+                         cancel_event):
+        """Inner method that runs while holding the inference lock."""
 
         # Clamp max_new_tokens for device limits
         if self.use_kv_cache:
@@ -979,6 +1018,8 @@ class BabelVox:
         t0 = time.time()
 
         for step in range(max_new_tokens):
+            if cancel_event is not None and cancel_event.is_set():
+                break
             # --- Get logits/hidden for this step ---
             if self.use_kv_cache:
                 if step > 0:
