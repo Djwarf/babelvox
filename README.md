@@ -2,7 +2,7 @@
 
 Real-time text-to-speech on Intel NPU via OpenVINO. Runs Qwen3-TTS 0.6B inference entirely on Intel NPU (AI Boost), achieving **RTF=1.0x** (real-time) speech synthesis on a Lunar Lake ultrabook.
 
-No PyTorch at runtime. Dependencies: `openvino`, `numpy`, `librosa`, `soundfile`, `scipy`, `transformers` (tokenizer only).
+No PyTorch at runtime. Dependencies: `openvino`, `numpy`, `librosa`, `soundfile`, `scipy`, `transformers` (tokenizer only), `num2words`, `defusedxml`.
 
 ## Installation
 
@@ -157,6 +157,38 @@ while True:
     sd.wait()
 ```
 
+### Text preprocessing & SSML
+
+BabelVox automatically normalizes text before synthesis — expanding abbreviations (`Dr.` → `Doctor`), numbers (`$4.50` → `four dollars and fifty cents`), dates, times, and phone numbers into spoken form. Unicode punctuation is cleaned up and repeated punctuation is collapsed.
+
+For fine-grained control, pass SSML markup:
+
+```python
+ssml = """<speak>
+  The price is <say-as interpret-as="number">$4.50</say-as>.
+  <break time="500ms"/>
+  Call <say-as interpret-as="telephone">555-123-4567</say-as> for details.
+  <sub alias="World Wide Web Consortium">W3C</sub> approved.
+</speak>"""
+wav, sr = tts.generate(ssml, ssml=True)
+```
+
+```bash
+babelvox --ssml --text '<speak>Hello.<break time="500ms"/>World.</speak>' -o out.wav
+```
+
+**Supported SSML tags:**
+
+| Tag | Effect |
+|---|---|
+| `<break time="500ms"/>` | Insert pause (maps to punctuation) |
+| `<break strength="strong"/>` | Insert pause by strength level |
+| `<sub alias="...">` | Replace text with alias |
+| `<say-as interpret-as="number\|date\|time\|telephone\|spell-out">` | Normalize to spoken form |
+| `<emphasis>`, `<prosody>`, `<phoneme>` | Parsed (effects coming in v0.11.0) |
+
+Onomatopoeia (boom, crash, sizzle, etc.) is also detected and annotated for future prosody control.
+
 ### 10 languages
 
 Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian, Spanish.
@@ -231,6 +263,7 @@ audio.play();
 | `top_k` | no | `50` | Top-k sampling |
 | `top_p` | no | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | no | `1.05` | Penalty for repeated tokens |
+| `ssml` | no | `false` | Treat `text` as SSML markup |
 
 ### Pre-download models
 
@@ -269,6 +302,7 @@ path = download_models()  # downloads ~2.5 GB to HuggingFace cache
 | `top_k` | `50` | Top-k sampling |
 | `top_p` | `1.0` | Nucleus sampling threshold |
 | `repetition_penalty` | `1.05` | Penalty for repeated tokens |
+| `ssml` | `False` | Treat `text` as SSML markup |
 
 **`tts.generate_stream(text, language, ..., chunk_frames=12)`** — same args as `generate()`, plus:
 
@@ -377,6 +411,7 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--max-talker-seq` | 256 | Fixed talker padding (when not using buckets) |
 | `--max-decoder-frames` | 256 | Max codec frames for audio decoder |
 | `--max-kv-len` | 256 | KV cache buffer size (if `--kv-cache`) |
+| `--ssml` | off | Treat `--text` as SSML markup |
 | `--text` | demo text | Text to synthesize |
 | `--language` | English | Language for synthesis |
 | `--ref-audio` | none | Reference audio for voice cloning |
