@@ -80,6 +80,15 @@ def main():
                         help="List saved speaker profiles and exit")
     parser.add_argument("--ssml", action="store_true",
                         help="Treat --text as SSML markup")
+    parser.add_argument("--rate", type=float, default=1.0,
+                        help="Speech rate multiplier (default: 1.0)")
+    parser.add_argument("--pitch", type=float, default=0.0,
+                        help="Pitch shift in semitones (default: 0)")
+    parser.add_argument("--volume", type=float, default=1.0,
+                        help="Volume multiplier (default: 1.0)")
+    parser.add_argument("--emotion", default=None,
+                        choices=["happy", "sad", "angry", "surprised", "neutral"],
+                        help="Emotion style for speech")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -146,6 +155,12 @@ def main():
               cors_origin=args.cors_origin, audio_dir=args.audio_dir)
     else:
         logger.info("Generating with BabelVox (%s)...", args.device)
+        prosody = None
+        if args.rate != 1.0 or args.pitch != 0.0 or args.volume != 1.0 or args.emotion:
+            from babelvox.prosody import ProsodyConfig
+            prosody = ProsodyConfig(
+                rate=args.rate, pitch_semitones=args.pitch,
+                volume=args.volume, emotion=args.emotion)
         wav, sr = tts.generate(
             text=args.text,
             language=args.language,
@@ -156,6 +171,7 @@ def main():
             temperature=0.9,
             top_k=50,
             ssml=args.ssml,
+            prosody=prosody,
         )
 
         # Ensure output directory exists

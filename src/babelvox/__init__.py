@@ -2,6 +2,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from babelvox.pipeline import BabelVox, download_models, mel_spectrogram_np
+from babelvox.prosody import ProsodyConfig
 from babelvox.server import serve
 from babelvox.speakers import (
     SpeakerLibrary,
@@ -18,4 +19,4 @@ except PackageNotFoundError:
 
 __all__ = ["BabelVox", "download_models", "mel_spectrogram_np", "serve",
            "preprocess_text", "SpeakerProfile", "SpeakerLibrary",
-           "mix_speakers", "interpolate_speakers"]
+           "mix_speakers", "interpolate_speakers", "ProsodyConfig"]

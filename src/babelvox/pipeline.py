@@ -696,7 +696,7 @@ class BabelVox:
                         min_chunk_frames=None, max_chunk_frames=None,
                         split_on_silence=False, silence_threshold=0.02,
                         crossfade_samples=1200, ssml=False,
-                        cancel_event=None):
+                        cancel_event=None, prosody=None):
         """Generate speech as a stream of waveform chunks.
 
         Yields (waveform_chunk, sample_rate) tuples. By default, chunks
@@ -731,7 +731,7 @@ class BabelVox:
                 repetition_penalty, subtalker_temperature, subtalker_top_k,
                 subtalker_top_p, chunk_frames, min_chunk_frames,
                 max_chunk_frames, split_on_silence, silence_threshold,
-                crossfade_samples, ssml, cancel_event)
+                crossfade_samples, ssml, cancel_event, prosody)
         finally:
             self._inference_lock.release()
 
@@ -741,7 +741,7 @@ class BabelVox:
             repetition_penalty, subtalker_temperature, subtalker_top_k,
             subtalker_top_p, chunk_frames, min_chunk_frames,
             max_chunk_frames, split_on_silence, silence_threshold,
-            crossfade_samples, ssml, cancel_event):
+            crossfade_samples, ssml, cancel_event, prosody):
         """Inner generator that runs while holding the inference lock."""
         if min_chunk_frames is None:
             min_chunk_frames = 6
@@ -760,6 +760,13 @@ class BabelVox:
             effective_max = min(max_new_tokens, talker_limit, decoder_limit)
             if effective_max < max_new_tokens:
                 max_new_tokens = effective_max
+
+        # Prosody: text manipulation + sampling adjustment
+        if prosody is not None:
+            from babelvox.prosody import adjust_sampling_for_emotion, apply_text_prosody
+            text = apply_text_prosody(text, prosody)
+            temperature, top_k = adjust_sampling_for_emotion(
+                prosody.emotion, temperature, top_k)
 
         if speaker is not None and speaker_embed is None:
             if self.speaker_library is None:
@@ -919,7 +926,11 @@ class BabelVox:
 
             # Yield a chunk when ready
             if _should_yield():
-                yield _yield_chunk(), 24000
+                chunk_wav = _yield_chunk()
+                if prosody is not None:
+                    from babelvox.prosody import apply_waveform_prosody
+                    chunk_wav = apply_waveform_prosody(chunk_wav, 24000, prosody)
+                yield chunk_wav, 24000
                 chunk_buffer = []
 
             # Build next talker input
@@ -939,7 +950,11 @@ class BabelVox:
         # Flush remaining frames
         if chunk_buffer:
             hit_eos = (len(all_codes) < max_new_tokens)
-            yield _yield_chunk(is_final=True, hit_eos=hit_eos), 24000
+            final_wav = _yield_chunk(is_final=True, hit_eos=hit_eos)
+            if prosody is not None:
+                from babelvox.prosody import apply_waveform_prosody
+                final_wav = apply_waveform_prosody(final_wav, 24000, prosody)
+            yield final_wav, 24000
 
     # ----------------------------------------------------------
     # Main generation loop
@@ -949,7 +964,7 @@ class BabelVox:
                  max_new_tokens=512, temperature=0.9, top_k=50, top_p=1.0,
                  repetition_penalty=1.05, subtalker_temperature=0.9,
                  subtalker_top_k=50, subtalker_top_p=1.0, ssml=False,
-                 cancel_event=None):
+                 cancel_event=None, prosody=None):
         """Generate speech from text, optionally cloning a reference voice.
 
         Voice can be specified via ref_audio (path), speaker_embed (numpy
@@ -966,13 +981,13 @@ class BabelVox:
                 text, language, ref_audio, ref_text, speaker_embed,
                 speaker, max_new_tokens, temperature, top_k, top_p,
                 repetition_penalty, subtalker_temperature, subtalker_top_k,
-                subtalker_top_p, ssml, cancel_event)
+                subtalker_top_p, ssml, cancel_event, prosody)
 
     def _generate_locked(self, text, language, ref_audio, ref_text,
                          speaker_embed, speaker, max_new_tokens, temperature,
                          top_k, top_p, repetition_penalty,
                          subtalker_temperature, subtalker_top_k,
-                         subtalker_top_p, ssml, cancel_event):
+                         subtalker_top_p, ssml, cancel_event, prosody):
         """Inner method that runs while holding the inference lock."""
 
         # Clamp max_new_tokens for device limits
@@ -992,6 +1007,13 @@ class BabelVox:
                 logger.debug("Clamped max_new_tokens: %d -> %d (NPU limits)",
                              max_new_tokens, effective_max)
                 max_new_tokens = effective_max
+
+        # Prosody: text manipulation + sampling adjustment
+        if prosody is not None:
+            from babelvox.prosody import adjust_sampling_for_emotion, apply_text_prosody
+            text = apply_text_prosody(text, prosody)
+            temperature, top_k = adjust_sampling_for_emotion(
+                prosody.emotion, temperature, top_k)
 
         # Speaker: named > ref_audio > explicit embed > default
         if speaker is not None and speaker_embed is None:
@@ -1162,5 +1184,10 @@ class BabelVox:
             fade_samples = min(2400, len(wav))  # 0.1s at 24kHz
             fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
             wav[-fade_samples:] *= fade
+
+        # Waveform prosody (rate, pitch, volume)
+        if prosody is not None:
+            from babelvox.prosody import apply_waveform_prosody
+            wav = apply_waveform_prosody(wav, 24000, prosody)
 
         return wav, 24000

@@ -83,6 +83,27 @@ def validate_tts_params(body, audio_dir=None):
     if "speaker" in body and body["speaker"]:
         kwargs["speaker"] = body["speaker"]
 
+    # Prosody object
+    if "prosody" in body and isinstance(body["prosody"], dict):
+        from babelvox.prosody import VALID_EMOTIONS, ProsodyConfig
+        p = body["prosody"]
+        rate = float(p.get("rate", 1.0))
+        pitch = float(p.get("pitch_semitones", 0))
+        volume = float(p.get("volume", 1.0))
+        emotion = p.get("emotion")
+        if not (0.25 <= rate <= 4.0):
+            return None, "prosody.rate must be between 0.25 and 4.0"
+        if not (-12 <= pitch <= 12):
+            return None, "prosody.pitch_semitones must be between -12 and 12"
+        if not (0.0 <= volume <= 2.0):
+            return None, "prosody.volume must be between 0.0 and 2.0"
+        if emotion is not None and emotion.lower() not in VALID_EMOTIONS:
+            return None, f"prosody.emotion must be one of: {', '.join(sorted(VALID_EMOTIONS))}"
+        kwargs["prosody"] = ProsodyConfig(
+            rate=rate, pitch_semitones=pitch, volume=volume,
+            emotion=emotion.lower() if emotion else None,
+        )
+
     # Validate numeric parameters
     for key in ("max_new_tokens", "top_k"):
         if key in body:
