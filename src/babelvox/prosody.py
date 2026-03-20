@@ -4,16 +4,19 @@ Provides text manipulation hints, sampling parameter adjustment, and
 waveform post-processing for expressiveness control.
 
 Note: Qwen3-TTS has no explicit prosody inputs. Text manipulation is
-heuristic/best-effort. Waveform post-processing (rate, pitch, volume)
-provides guaranteed control via librosa.
+heuristic/best-effort. Waveform post-processing (rate, volume)
+provides guaranteed control via scipy resampling.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
-import librosa
 import numpy as np
+from scipy.signal import resample
+
+logger = logging.getLogger("babelvox")
 
 VALID_EMOTIONS = {"happy", "sad", "angry", "surprised", "neutral"}
 
@@ -107,15 +110,19 @@ def apply_waveform_prosody(wav: np.ndarray, sr: int,
                            config: ProsodyConfig) -> np.ndarray:
     """Apply guaranteed prosody effects to a waveform.
 
-    Uses librosa for time-stretching and pitch-shifting.
+    Rate changes use scipy resampling (changes speed + pitch together,
+    artifact-free). Pitch-only shifting is not supported — the phase
+    vocoder artifacts were too severe for speech.
     Volume is simple amplitude scaling with clipping.
     """
     if config.rate != 1.0:
-        wav = librosa.effects.time_stretch(wav, rate=config.rate)
+        target_len = int(len(wav) / config.rate)
+        if target_len > 0:
+            wav = resample(wav, target_len).astype(np.float32)
 
     if config.pitch_semitones != 0.0:
-        wav = librosa.effects.pitch_shift(
-            wav, sr=sr, n_steps=config.pitch_semitones)
+        logger.debug("pitch_semitones ignored — phase vocoder artifacts "
+                     "degrade speech quality; use rate instead")
 
     if config.volume != 1.0:
         wav = np.clip(wav * config.volume, -1.0, 1.0).astype(np.float32)

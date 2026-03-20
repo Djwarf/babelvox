@@ -109,11 +109,11 @@ class TestApplyWaveformProsody:
         result = apply_waveform_prosody(wav, 24000, ProsodyConfig(rate=0.5))
         assert len(result) > len(wav) * 1.5
 
-    def test_pitch_preserves_length(self):
+    def test_pitch_is_noop(self):
         wav = self._make_wav(1.0)
         result = apply_waveform_prosody(wav, 24000, ProsodyConfig(pitch_semitones=4.0))
-        # Pitch shift should preserve approximate length
-        assert abs(len(result) - len(wav)) < 100
+        # Pitch shifting is intentionally disabled (phase vocoder artifacts)
+        np.testing.assert_array_equal(result, wav)
 
     def test_volume_scales_amplitude(self):
         wav = self._make_wav(0.1)
@@ -133,7 +133,7 @@ class TestApplyWaveformProsody:
 
     def test_combined_effects(self):
         wav = self._make_wav(1.0)
-        config = ProsodyConfig(rate=1.5, pitch_semitones=2.0, volume=0.8)
+        config = ProsodyConfig(rate=1.5, volume=0.8)
         result = apply_waveform_prosody(wav, 24000, config)
         # Should be shorter (rate > 1) and quieter (volume < 1)
         assert len(result) < len(wav)

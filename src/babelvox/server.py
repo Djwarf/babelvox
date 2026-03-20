@@ -198,7 +198,9 @@ def handle_sse_stream(handler, tts, cors_origin="*", audio_dir=None):
 
     total_samples = 0
     try:
-        for wav_chunk, sr in tts.generate_stream(**kwargs):
+        for wav_chunk, sr in tts.generate_stream(
+                **kwargs, split_on_silence=True, min_chunk_frames=6,
+                max_chunk_frames=48, crossfade_samples=1200):
             audio_bytes = encode_chunk(wav_chunk, sr, fmt)
             _sse_write(handler, "audio", base64.b64encode(audio_bytes).decode())
             total_samples += len(wav_chunk)

@@ -928,8 +928,11 @@ class BabelVox:
             if _should_yield():
                 chunk_wav = _yield_chunk()
                 if prosody is not None:
-                    from babelvox.prosody import apply_waveform_prosody
-                    chunk_wav = apply_waveform_prosody(chunk_wav, 24000, prosody)
+                    try:
+                        from babelvox.prosody import apply_waveform_prosody
+                        chunk_wav = apply_waveform_prosody(chunk_wav, 24000, prosody)
+                    except Exception:
+                        logger.debug("Prosody failed on chunk, yielding raw audio")
                 yield chunk_wav, 24000
                 chunk_buffer = []
 
@@ -952,8 +955,11 @@ class BabelVox:
             hit_eos = (len(all_codes) < max_new_tokens)
             final_wav = _yield_chunk(is_final=True, hit_eos=hit_eos)
             if prosody is not None:
-                from babelvox.prosody import apply_waveform_prosody
-                final_wav = apply_waveform_prosody(final_wav, 24000, prosody)
+                try:
+                    from babelvox.prosody import apply_waveform_prosody
+                    final_wav = apply_waveform_prosody(final_wav, 24000, prosody)
+                except Exception:
+                    logger.debug("Prosody failed on final chunk, yielding raw audio")
             yield final_wav, 24000
 
     # ----------------------------------------------------------

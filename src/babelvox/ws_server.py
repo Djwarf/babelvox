@@ -35,7 +35,9 @@ async def _stream_audio(websocket, tts, kwargs, cancel_event):
             return None
 
     try:
-        gen = tts.generate_stream(**kwargs, cancel_event=cancel_event)
+        gen = tts.generate_stream(
+            **kwargs, cancel_event=cancel_event, split_on_silence=True,
+            min_chunk_frames=6, max_chunk_frames=48, crossfade_samples=1200)
         while True:
             result = await loop.run_in_executor(None, _next_chunk, gen)
             if result is None:
