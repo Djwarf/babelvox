@@ -1,5 +1,6 @@
 """BabelVox HTTP server for cross-language TTS integration."""
 import base64
+import contextlib
 import io
 import json
 import logging
@@ -176,10 +177,8 @@ def handle_sse_stream(handler, tts, cors_origin="*", audio_dir=None):
 
     # Parse prosody JSON from query string so SSE supports prosody control
     if "prosody" in params and isinstance(params["prosody"], str):
-        try:
+        with contextlib.suppress(json.JSONDecodeError, ValueError):
             params["prosody"] = json.loads(params["prosody"])
-        except (json.JSONDecodeError, ValueError):
-            pass
 
     kwargs, error = validate_tts_params(params, audio_dir=audio_dir)
     if error:

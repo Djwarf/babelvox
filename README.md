@@ -78,7 +78,19 @@ babelvox --int8 --cp-kv-cache --ref-audio reference.wav \
 
 ### Speaker profiles
 
-Save, load, and reuse named speaker voices across sessions. Example speaker profiles are bundled with the package and available immediately — they are automatically copied to your speaker library on first use.
+Save, load, and reuse named speaker voices across sessions. Four example speakers are bundled and available immediately:
+
+| Speaker | Gender | Style |
+|---|---|---|
+| `steve` | Male | Literary fiction narrator |
+| `lou` | Female | Detective fiction narrator |
+| `cindy` | Female | Memoir narrator |
+| `phil` | Male | Contemporary fiction narrator |
+
+```bash
+# Use a bundled speaker right away — no setup needed
+babelvox --speaker steve --text "Hello from Steve" -o hello.wav
+```
 
 ```python
 from babelvox import BabelVox, SpeakerLibrary
