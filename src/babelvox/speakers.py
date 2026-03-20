@@ -52,10 +52,11 @@ class SpeakerLibrary:
       - ``{name}.npy`` — numpy array (1, 1024) float32
     """
 
-    def __init__(self, library_dir: str):
+    def __init__(self, library_dir: str, copy_builtins: bool = True):
         self.library_dir = library_dir
         os.makedirs(library_dir, exist_ok=True)
-        self._copy_builtin_speakers()
+        if copy_builtins:
+            self._copy_builtin_speakers()
 
     def _copy_builtin_speakers(self) -> None:
         """Copy bundled example speakers to user library if not present."""

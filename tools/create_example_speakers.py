@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create bundled example speaker profiles from reference audio.
 
-Place .wav files in tools/reference_audio/ and configure SPEAKERS below,
+Place audio files in tools/reference_audio/ and configure SPEAKERS below,
 then run this script to extract embeddings and save profiles to
 src/babelvox/data/speakers/.
 
@@ -12,12 +12,20 @@ import os
 import sys
 
 # ── Configure example speakers here ──────────────────────────────────
-# Each entry: (wav_filename, transcript, language, gender, description, tags)
+# Each entry: (filename, transcript, language, gender, description, tags)
 SPEAKERS = [
-    # ("alice.wav", "The transcript of what Alice says in the audio.",
-    #  "English", "female", "Warm female narrator", ["narrator", "example"]),
-    # ("bob.wav", "The transcript of what Bob says in the audio.",
-    #  "English", "male", "Clear male speaker", ["narrator", "example"]),
+    ("steve.mp3",
+     "By the late summer the news of what had happened on Animal Farm had spread across half the county.",
+     "English", "male", "Male narrator, literary fiction", ["narrator", "example"]),
+    ("lou.mp3",
+     "Detective sergeant Bennett mentally notes the blanket, pillows on the couch the makeshift ashtray on the table and probably half a dozen other things I haven't even thought of.",
+     "English", "female", "Female narrator, detective fiction", ["narrator", "example"]),
+    ("cindy.mp3",
+     "On the bleak greyness of a Cambridge spring day we set off in a cortege black car towards great Saint Mary's church.",
+     "English", "female", "Female narrator, memoir", ["narrator", "example"]),
+    ("phil.mp3",
+     "The second half of the test was as easy as the first and he found he did a passable job on the essay kept it short.",
+     "English", "male", "Male narrator, contemporary fiction", ["narrator", "example"]),
 ]
 # ─────────────────────────────────────────────────────────────────────
 

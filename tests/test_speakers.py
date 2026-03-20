@@ -16,7 +16,7 @@ from babelvox.speakers import (
 
 @pytest.fixture
 def tmp_library(tmp_path):
-    return SpeakerLibrary(str(tmp_path))
+    return SpeakerLibrary(str(tmp_path), copy_builtins=False)
 
 
 def _make_profile(name="alice", **kwargs):
@@ -234,7 +234,7 @@ class TestServerSpeakerEndpoints:
     @pytest.fixture
     def mock_tts(self, tmp_path):
         tts = MagicMock()
-        tts.speaker_library = SpeakerLibrary(str(tmp_path))
+        tts.speaker_library = SpeakerLibrary(str(tmp_path), copy_builtins=False)
         tts.generate.return_value = (np.zeros(2400, dtype=np.float32), 24000)
         # Wire save_speaker to actually save
         def _save(name, ref_audio, **meta):

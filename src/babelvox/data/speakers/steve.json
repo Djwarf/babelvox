@@ -1,0 +1,12 @@
+{
+  "name": "steve",
+  "description": "Male narrator, literary fiction",
+  "language": "English",
+  "gender": "male",
+  "tags": [
+    "narrator",
+    "example"
+  ],
+  "created_at": "2026-03-20T21:00:04.624347+00:00",
+  "source_audio": "/mnt/c/Users/Sammie/Desktop/Repos/Babelvox/tools/reference_audio/steve.mp3"
+}
