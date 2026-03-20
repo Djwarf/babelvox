@@ -9,11 +9,14 @@ import json
 import logging
 import os
 import re
+import shutil
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
 logger = logging.getLogger("babelvox")
+
+BUILTIN_SPEAKERS_DIR = os.path.join(os.path.dirname(__file__), "data", "speakers")
 
 _INVALID_NAME_RE = re.compile(r'[/\\]|\.\.|[\x00-\x1f]')
 
@@ -52,6 +55,24 @@ class SpeakerLibrary:
     def __init__(self, library_dir: str):
         self.library_dir = library_dir
         os.makedirs(library_dir, exist_ok=True)
+        self._copy_builtin_speakers()
+
+    def _copy_builtin_speakers(self) -> None:
+        """Copy bundled example speakers to user library if not present."""
+        if not os.path.isdir(BUILTIN_SPEAKERS_DIR):
+            return
+        for filename in os.listdir(BUILTIN_SPEAKERS_DIR):
+            if not filename.endswith(".json"):
+                continue
+            name = filename[:-5]
+            if os.path.isfile(self._json_path(name)):
+                continue  # never overwrite user profiles
+            json_src = os.path.join(BUILTIN_SPEAKERS_DIR, f"{name}.json")
+            npy_src = os.path.join(BUILTIN_SPEAKERS_DIR, f"{name}.npy")
+            if os.path.isfile(json_src) and os.path.isfile(npy_src):
+                shutil.copy2(json_src, self._json_path(name))
+                shutil.copy2(npy_src, self._npy_path(name))
+                logger.info("Copied bundled speaker profile '%s'", name)
 
     def _json_path(self, name: str) -> str:
         return os.path.join(self.library_dir, f"{name}.json")

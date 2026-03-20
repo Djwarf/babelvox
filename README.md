@@ -78,7 +78,7 @@ babelvox --int8 --cp-kv-cache --ref-audio reference.wav \
 
 ### Speaker profiles
 
-Save, load, and reuse named speaker voices across sessions:
+Save, load, and reuse named speaker voices across sessions. Example speaker profiles are bundled with the package and available immediately — they are automatically copied to your speaker library on first use.
 
 ```python
 from babelvox import BabelVox, SpeakerLibrary

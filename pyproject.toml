@@ -52,6 +52,9 @@ ws = [
 package-dir = {"" = "src"}
 packages = ["babelvox", "babelvox.text"]
 
+[tool.setuptools.package-data]
+babelvox = ["static/*.html", "data/speakers/*.json", "data/speakers/*.npy"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
