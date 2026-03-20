@@ -333,6 +333,8 @@ Run BabelVox as an HTTP server so any language (JavaScript, Go, Rust, etc.) can 
 babelvox --serve --int8 --cp-kv-cache --port 8765
 ```
 
+A built-in web demo UI is available at `http://localhost:8765/` with interactive controls for all features.
+
 Then from any client:
 
 ```bash
@@ -359,6 +361,7 @@ audio.play();
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/` | Built-in web demo UI |
 | `POST` | `/tts` | Synthesize speech — JSON body in, WAV bytes out |
 | `POST` | `/tts/batch` | Batch synthesis — multiple texts in one request |
 | `POST` | `/tts/longform` | Long-form synthesis — auto-segmented, single WAV out |
@@ -385,6 +388,24 @@ audio.play();
 | `ssml` | no | `false` | Treat `text` as SSML markup |
 | `speaker` | no | `null` | Named speaker profile |
 | `prosody` | no | `null` | Prosody object: `{"rate": 1.0, "pitch_semitones": 0, "volume": 1.0, "emotion": null}` |
+
+### Web demo UI
+
+The server includes a built-in interactive demo at `GET /` — a single-page app with no external dependencies. It covers every API feature:
+
+| Tab | Feature |
+|---|---|
+| **Basic TTS** | Text input, 10 languages, speaker select, waveform visualization |
+| **Prosody & Emotion** | Rate/pitch/volume sliders, 5 emotion styles |
+| **SSML** | Monospace editor with snippet buttons for all supported tags |
+| **SSE Stream** | Real-time audio playback via Web Audio API as chunks arrive |
+| **WebSocket** | Bidirectional streaming with connect/send/cancel controls |
+| **Long-form** | Full synthesis or SSE-streamed with progress bar |
+| **Batch** | Dynamic multi-item synthesis with per-item playback |
+| **Speakers** | List, select, and delete saved speaker profiles |
+| **Settings** | Sampling parameters, connection test, request log |
+
+Works on both CPU and NPU — just start the server and open `http://localhost:8765/` in your browser.
 
 ### SSE streaming
 

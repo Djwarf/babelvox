@@ -1,0 +1,1936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BabelVox - TTS Demo</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --card: #1c2333;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text2: #8b949e;
+  --accent: #00d4ff;
+  --accent-hover: #00b4d8;
+  --error: #f85149;
+  --success: #3fb950;
+  --warning: #d29922;
+  --radius: 8px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* Layout */
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  grid-template-rows: 56px 1fr 32px;
+  min-height: 100vh;
+}
+
+.header {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.header .subtitle {
+  color: var(--text2);
+  font-size: 13px;
+}
+
+.health-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--text2);
+  margin-left: auto;
+  transition: background 0.3s;
+}
+.health-dot.ok { background: var(--success); }
+.health-dot.err { background: var(--error); }
+
+/* Sidebar */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  overflow-y: auto;
+}
+
+.sidebar button {
+  display: block;
+  width: 100%;
+  padding: 10px 20px;
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: all 0.15s;
+}
+
+.sidebar button:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.04);
+}
+
+.sidebar button.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: rgba(0,212,255,0.06);
+}
+
+.sidebar .nav-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text2);
+  padding: 16px 20px 6px;
+  opacity: 0.6;
+}
+
+/* Main */
+.main {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* Status bar */
+.statusbar {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 0 20px;
+  font-size: 12px;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Components */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.card h3 {
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+
+textarea, input[type="text"], input[type="number"], select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+textarea:focus, input:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+textarea { min-height: 80px; }
+
+select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.row { display: flex; gap: 12px; margin-bottom: 12px; }
+.row > * { flex: 1; }
+
+.btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+.btn-secondary:hover { background: #444c56; }
+
+.btn-danger {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+}
+.btn-danger:hover { background: rgba(248,81,73,0.1); }
+
+.btn-sm { padding: 4px 12px; font-size: 12px; }
+
+.btn-group { display: flex; gap: 8px; margin-bottom: 12px; }
+
+.emotion-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg);
+  color: var(--text2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.emotion-btn:hover { border-color: var(--accent); color: var(--text); }
+.emotion-btn.active {
+  border-color: var(--accent);
+  background: rgba(0,212,255,0.1);
+  color: var(--accent);
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.slider-row label { margin: 0; min-width: 80px; }
+.slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.slider-row .slider-val {
+  min-width: 50px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-player {
+  margin-top: 12px;
+  width: 100%;
+}
+.audio-player audio { width: 100%; height: 40px; }
+
+canvas.waveform {
+  width: 100%;
+  height: 80px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  margin-top: 8px;
+  display: block;
+}
+
+.status-msg {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 8px;
+}
+.status-msg.error { color: var(--error); }
+.status-msg.success { color: var(--success); }
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.progress-bar .fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s;
+  width: 0%;
+}
+
+.conn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.conn-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text2);
+}
+.conn-dot.connected { background: var(--success); }
+.conn-dot.connecting { background: var(--warning); }
+
+.speaker-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+.speaker-card .info { flex: 1; }
+.speaker-card .name { font-weight: 600; font-size: 14px; }
+.speaker-card .meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.speaker-card .tags { display: flex; gap: 4px; margin-top: 4px; }
+.speaker-card .tag {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0,212,255,0.1);
+  color: var(--accent);
+}
+
+.snippet-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text2);
+  font-size: 11px;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.snippet-btn:hover { border-color: var(--accent); color: var(--text); }
+
+.mono-input {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 13px;
+  min-height: 150px;
+  tab-size: 2;
+}
+
+.batch-item {
+  display: flex;
+  gap: 8px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+.batch-item input { flex: 1; }
+.batch-item select { flex: 0 0 120px; }
+.batch-item .btn { flex: 0 0 auto; margin-top: 0; }
+
+.batch-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.batch-result .idx { color: var(--text2); min-width: 24px; }
+.batch-result audio { height: 32px; flex: 1; }
+.batch-result .dur { color: var(--text2); font-size: 12px; }
+.batch-result .err { color: var(--error); font-size: 12px; }
+
+.info-box {
+  background: rgba(0,212,255,0.06);
+  border: 1px solid rgba(0,212,255,0.2);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text2);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.log-area {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-family: monospace;
+  font-size: 11px;
+  max-height: 300px;
+  overflow-y: auto;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mb { margin-bottom: 12px; }
+
+.sub-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sub-tab {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sub-tab:hover { color: var(--text); }
+.sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.sub-content { display: none; }
+.sub-content.active { display: block; }
+
+@media (max-width: 768px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 56px auto 1fr 32px;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    overflow-x: auto;
+    padding: 0;
+  }
+  .sidebar .nav-label { display: none; }
+  .sidebar button {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    padding: 10px 16px;
+  }
+  .sidebar button.active { border-bottom-color: var(--accent); border-left: none; }
+  .main { padding: 16px; }
+  .row { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <h1>BABELVOX</h1>
+    <span class="subtitle">Text-to-Speech Demo</span>
+    <div class="health-dot" id="healthDot" title="Server status"></div>
+  </header>
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="nav-label">Synthesis</div>
+    <button class="active" onclick="showTab('basic')">Basic TTS</button>
+    <button onclick="showTab('prosody')">Prosody & Emotion</button>
+    <button onclick="showTab('ssml')">SSML</button>
+    <div class="nav-label">Streaming</div>
+    <button onclick="showTab('sse')">SSE Stream</button>
+    <button onclick="showTab('ws')">WebSocket</button>
+    <div class="nav-label">Advanced</div>
+    <button onclick="showTab('longform')">Long-form</button>
+    <button onclick="showTab('batch')">Batch</button>
+    <div class="nav-label">Management</div>
+    <button onclick="showTab('speakers')">Speakers</button>
+    <button onclick="showTab('config')">Settings</button>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- Tab: Basic TTS -->
+    <div class="tab-content active" id="tab-basic">
+      <div class="card">
+        <h3>Text-to-Speech</h3>
+        <label>Text</label>
+        <textarea id="basicText" placeholder="Enter text to synthesize...">Hello, this is a demonstration of BabelVox text to speech.</textarea>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Language</label>
+            <select id="basicLang" onchange="fillExample('basicText', this.value)">
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label>Speaker</label>
+            <select id="basicSpeaker"><option value="">Default</option></select>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="basicGenBtn" onclick="generateBasic()">Generate</button>
+        <div class="audio-player" id="basicPlayer" style="display:none">
+          <audio controls id="basicAudio"></audio>
+          <canvas class="waveform" id="basicWaveform"></canvas>
+        </div>
+        <div class="status-msg" id="basicStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Prosody & Emotion -->
+    <div class="tab-content" id="tab-prosody">
+      <div class="card">
+        <h3>Emotion</h3>
+        <div class="btn-group" id="emotionBtns">
+          <button class="emotion-btn" onclick="selectEmotion(this, null)">neutral</button>
+          <button class="emotion-btn" onclick="selectEmotion(this, 'happy')">happy</button>
+          <button class="emotion-btn" onclick="selectEmotion(this, 'sad')">sad</button>
+          <button class="emotion-btn" onclick="selectEmotion(this, 'angry')">angry</button>
+          <button class="emotion-btn" onclick="selectEmotion(this, 'surprised')">surprised</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Prosody Controls</h3>
+        <div class="slider-row">
+          <label>Rate</label>
+          <input type="range" id="prosRate" min="0.25" max="4.0" step="0.05" value="1.0"
+                 oninput="document.getElementById('prosRateVal').textContent=this.value">
+          <span class="slider-val" id="prosRateVal">1.0</span>
+        </div>
+        <div class="slider-row">
+          <label>Pitch (st)</label>
+          <input type="range" id="prosPitch" min="-12" max="12" step="0.5" value="0"
+                 oninput="document.getElementById('prosPitchVal').textContent=this.value">
+          <span class="slider-val" id="prosPitchVal">0</span>
+        </div>
+        <div class="slider-row">
+          <label>Volume</label>
+          <input type="range" id="prosVol" min="0" max="2.0" step="0.05" value="1.0"
+                 oninput="document.getElementById('prosVolVal').textContent=this.value">
+          <span class="slider-val" id="prosVolVal">1.0</span>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="resetProsody()">Reset</button>
+      </div>
+      <div class="card">
+        <h3>Generate with Prosody</h3>
+        <label>Text</label>
+        <textarea id="prosText" placeholder="Enter text...">This is exciting news that I want to share with everyone!</textarea>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Language</label>
+            <select id="prosLang">
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label>Speaker</label>
+            <select id="prosSpeaker"><option value="">Default</option></select>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="prosGenBtn" onclick="generateProsody()">Generate</button>
+        <div class="audio-player" id="prosPlayer" style="display:none">
+          <audio controls id="prosAudio"></audio>
+          <canvas class="waveform" id="prosWaveform"></canvas>
+        </div>
+        <div class="status-msg" id="prosStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tab: SSML -->
+    <div class="tab-content" id="tab-ssml">
+      <div class="card">
+        <h3>SSML Snippets</h3>
+        <div class="btn-group" style="flex-wrap:wrap">
+          <button class="snippet-btn" onclick="insertSSML('break')">&lt;break&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('sub')">&lt;sub&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('number')">&lt;say-as number&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('date')">&lt;say-as date&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('telephone')">&lt;say-as telephone&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('spell')">&lt;say-as spell-out&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('emphasis')">&lt;emphasis&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('template')">Full Template</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>SSML Input</h3>
+        <textarea id="ssmlText" class="mono-input"><speak>
+Hello, welcome to BabelVox.
+<break time="500ms"/>
+The price is <say-as interpret-as="number">$4.50</say-as>.
+<break time="300ms"/>
+Call us at <say-as interpret-as="telephone">555-123-4567</say-as>.
+</speak></textarea>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Language</label>
+            <select id="ssmlLang">
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label>Speaker</label>
+            <select id="ssmlSpeaker"><option value="">Default</option></select>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="ssmlGenBtn" onclick="generateSSML()">Generate</button>
+        <div class="audio-player" id="ssmlPlayer" style="display:none">
+          <audio controls id="ssmlAudio"></audio>
+          <canvas class="waveform" id="ssmlWaveform"></canvas>
+        </div>
+        <div class="status-msg" id="ssmlStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tab: SSE Stream -->
+    <div class="tab-content" id="tab-sse">
+      <div class="card">
+        <h3>SSE Streaming</h3>
+        <div class="info-box">Audio chunks are streamed via Server-Sent Events and played in real-time using the Web Audio API.</div>
+        <label>Text</label>
+        <textarea id="sseText" placeholder="Enter text to stream...">The quick brown fox jumps over the lazy dog. This sentence demonstrates real-time streaming synthesis.</textarea>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Language</label>
+            <select id="sseLang">
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label>Speaker</label>
+            <select id="sseSpeaker"><option value="">Default</option></select>
+          </div>
+          <div>
+            <label>Format</label>
+            <select id="sseFormat">
+              <option value="pcm_s16le">PCM (low latency)</option>
+              <option value="wav_chunks">WAV chunks</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="sseStartBtn" onclick="startSSE()">Start Stream</button>
+          <button class="btn btn-secondary" id="sseStopBtn" onclick="stopSSE()" disabled>Stop</button>
+        </div>
+        <div class="status-msg" id="sseStats"></div>
+        <canvas class="waveform" id="sseWaveform"></canvas>
+        <div class="audio-player" id="ssePlayer" style="display:none">
+          <audio controls id="sseAudio"></audio>
+        </div>
+        <div class="status-msg" id="sseStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tab: WebSocket -->
+    <div class="tab-content" id="tab-ws">
+      <div class="card">
+        <h3>WebSocket Streaming</h3>
+        <div class="info-box">Bidirectional real-time streaming with cancel support. Requires the WebSocket server (<code>--ws-port</code>).</div>
+        <div class="row">
+          <div>
+            <label>WebSocket Port</label>
+            <input type="number" id="wsPort" value="8766" style="max-width:120px">
+          </div>
+          <div style="display:flex;align-items:end;gap:8px">
+            <button class="btn btn-primary btn-sm" id="wsConnBtn" onclick="connectWS()">Connect</button>
+            <button class="btn btn-secondary btn-sm" id="wsDiscBtn" onclick="disconnectWS()" disabled>Disconnect</button>
+            <span class="conn-status" id="wsConnStatus">
+              <span class="conn-dot" id="wsConnDot"></span>
+              <span id="wsConnLabel">Disconnected</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <label>Text</label>
+        <textarea id="wsText" placeholder="Enter text to stream via WebSocket...">Hello from WebSocket streaming! This audio is delivered in real-time binary chunks.</textarea>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Language</label>
+            <select id="wsLang">
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label>Speaker</label>
+            <select id="wsSpeaker"><option value="">Default</option></select>
+          </div>
+          <div>
+            <label>Format</label>
+            <select id="wsFormat">
+              <option value="pcm_s16le">PCM (low latency)</option>
+              <option value="wav_chunks">WAV chunks</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="wsSendBtn" onclick="sendWS()" disabled>Send</button>
+          <button class="btn btn-danger btn-sm" id="wsCancelBtn" onclick="cancelWS()" disabled>Cancel</button>
+        </div>
+        <div class="status-msg" id="wsStats"></div>
+        <canvas class="waveform" id="wsWaveform"></canvas>
+        <div class="status-msg" id="wsStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Long-form -->
+    <div class="tab-content" id="tab-longform">
+      <div class="card">
+        <h3>Long-form Synthesis</h3>
+        <label>Text</label>
+        <textarea id="lfText" style="min-height:160px" placeholder="Enter long text...">Chapter 1: The Beginning
+
+It was a bright cold day in April, and the clocks were striking thirteen. The sky above the port was the color of television, tuned to a dead channel.
+
+Winston Smith, his chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through the glass doors, though not quickly enough to prevent a swirl of gritty dust from entering along with him.
+
+The hallway smelt of boiled cabbage and old rag mats.</textarea>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>Strategy</label>
+            <select id="lfStrategy">
+              <option value="natural">Natural</option>
+              <option value="paragraph">Paragraph</option>
+              <option value="sentence">Sentence</option>
+              <option value="chapter">Chapter</option>
+            </select>
+          </div>
+          <div>
+            <label>Language</label>
+            <select id="lfLang">
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label>Speaker</label>
+            <select id="lfSpeaker"><option value="">Default</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-tabs">
+        <button class="sub-tab active" onclick="showSubTab('lf', 'post', this)">Full Synthesis</button>
+        <button class="sub-tab" onclick="showSubTab('lf', 'sse', this)">Streamed (SSE)</button>
+      </div>
+
+      <div class="sub-content active" id="lf-post">
+        <div class="card">
+          <button class="btn btn-primary" id="lfPostBtn" onclick="generateLongform()">Generate</button>
+          <div class="audio-player" id="lfPostPlayer" style="display:none">
+            <audio controls id="lfPostAudio"></audio>
+            <canvas class="waveform" id="lfPostWaveform"></canvas>
+          </div>
+          <div class="status-msg" id="lfPostStatus"></div>
+        </div>
+      </div>
+      <div class="sub-content" id="lf-sse">
+        <div class="card">
+          <div class="btn-group">
+            <button class="btn btn-primary" id="lfSseStartBtn" onclick="startLongformSSE()">Stream</button>
+            <button class="btn btn-secondary" id="lfSseStopBtn" onclick="stopLongformSSE()" disabled>Stop</button>
+          </div>
+          <div class="progress-bar" id="lfProgress"><div class="fill" id="lfProgressFill"></div></div>
+          <div class="status-msg" id="lfSseStats"></div>
+          <canvas class="waveform" id="lfSseWaveform"></canvas>
+          <div class="audio-player" id="lfSsePlayer" style="display:none">
+            <audio controls id="lfSseAudio"></audio>
+          </div>
+          <div class="status-msg" id="lfSseStatus"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Batch -->
+    <div class="tab-content" id="tab-batch">
+      <div class="card">
+        <h3>Batch Synthesis</h3>
+        <div class="info-box">Synthesize multiple texts in a single request. Each item can have a different language and speaker.</div>
+        <div id="batchItems">
+          <div class="batch-item">
+            <input type="text" value="Hello, welcome to BabelVox." placeholder="Text...">
+            <select>
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+            <button class="btn btn-danger btn-sm" onclick="removeBatchItem(this)">X</button>
+          </div>
+          <div class="batch-item">
+            <input type="text" value="This is the second item in the batch." placeholder="Text...">
+            <select>
+              <option value="English">English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Italian">Italian</option>
+              <option value="Japanese">Japanese</option>
+              <option value="Korean">Korean</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Russian">Russian</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+            <button class="btn btn-danger btn-sm" onclick="removeBatchItem(this)">X</button>
+          </div>
+        </div>
+        <div class="btn-group" style="margin-top:8px">
+          <button class="btn btn-secondary btn-sm" onclick="addBatchItem()">+ Add Item</button>
+          <button class="btn btn-primary" id="batchGenBtn" onclick="generateBatch()">Generate All</button>
+        </div>
+        <div id="batchResults" style="margin-top:12px"></div>
+        <div class="status-msg" id="batchStatus"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Speakers -->
+    <div class="tab-content" id="tab-speakers">
+      <div class="card">
+        <h3>Speaker Profiles</h3>
+        <div class="info-box">
+          Speaker profiles are created from reference audio files on the server.
+          Use the CLI to save speakers: <code>babelvox --save-speaker alice --ref-audio voice.wav</code>
+          or POST to <code>/speakers</code> with a server-side audio path.
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-secondary btn-sm" onclick="loadSpeakers()">Refresh</button>
+        </div>
+        <div id="speakerList"></div>
+        <div class="status-msg" id="speakerStatus"></div>
+      </div>
+      <div class="card">
+        <h3>Voice Mixing (Python API)</h3>
+        <div class="info-box">
+          Speaker mixing requires direct access to numpy embeddings and is available via the Python API.
+          Mix two or more voices with weighted blending:
+        </div>
+        <pre class="log-area">from babelvox.speakers import mix_speakers
+
+# Load two speaker profiles
+alice = tts.speaker_library.load("alice")
+bob = tts.speaker_library.load("bob")
+
+# Mix: 70% alice, 30% bob
+mixed = mix_speakers(
+    [alice.embedding, bob.embedding],
+    [0.7, 0.3]
+)
+
+# Use the mixed voice
+wav, sr = tts.generate("Hello!", speaker_embed=mixed)</pre>
+      </div>
+    </div>
+
+    <!-- Tab: Config -->
+    <div class="tab-content" id="tab-config">
+      <div class="card">
+        <h3>Sampling Parameters</h3>
+        <div class="info-box">These parameters apply globally to Basic TTS, Prosody, SSML, and Batch tabs.</div>
+        <div class="slider-row">
+          <label>Temperature</label>
+          <input type="range" id="cfgTemp" min="0.1" max="2.0" step="0.05" value="0.9"
+                 oninput="updateConfig('temperature', this.value)">
+          <span class="slider-val" id="cfgTempVal">0.9</span>
+        </div>
+        <div class="slider-row">
+          <label>Top-K</label>
+          <input type="range" id="cfgTopK" min="1" max="200" step="1" value="50"
+                 oninput="updateConfig('top_k', this.value)">
+          <span class="slider-val" id="cfgTopKVal">50</span>
+        </div>
+        <div class="slider-row">
+          <label>Top-P</label>
+          <input type="range" id="cfgTopP" min="0.1" max="1.0" step="0.05" value="1.0"
+                 oninput="updateConfig('top_p', this.value)">
+          <span class="slider-val" id="cfgTopPVal">1.0</span>
+        </div>
+        <div class="slider-row">
+          <label>Rep. Penalty</label>
+          <input type="range" id="cfgRepPen" min="1.0" max="2.0" step="0.01" value="1.05"
+                 oninput="updateConfig('repetition_penalty', this.value)">
+          <span class="slider-val" id="cfgRepPenVal">1.05</span>
+        </div>
+        <div class="slider-row">
+          <label>Max Tokens</label>
+          <input type="range" id="cfgMaxTok" min="50" max="2048" step="50" value="512"
+                 oninput="updateConfig('max_new_tokens', this.value)">
+          <span class="slider-val" id="cfgMaxTokVal">512</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Connection</h3>
+        <div class="row">
+          <div>
+            <label>HTTP Base URL</label>
+            <input type="text" id="cfgBaseUrl" readonly>
+          </div>
+          <div>
+            <label>WebSocket Port</label>
+            <input type="number" id="cfgWsPort" value="8766" style="max-width:120px">
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="testConnection()">Test Connection</button>
+        <div class="status-msg" id="cfgConnStatus"></div>
+      </div>
+      <div class="card">
+        <h3>Request Log</h3>
+        <button class="btn btn-secondary btn-sm mb" onclick="document.getElementById('reqLog').textContent=''">Clear</button>
+        <div class="log-area" id="reqLog"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Status Bar -->
+  <footer class="statusbar">
+    <span id="sbStatus">Connecting...</span>
+  </footer>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────
+const State = {
+  speakers: [],
+  selectedEmotion: null,
+  sampling: {
+    temperature: 0.9,
+    top_k: 50,
+    top_p: 1.0,
+    repetition_penalty: 1.05,
+    max_new_tokens: 512,
+  },
+  sseSource: null,
+  lfSseSource: null,
+  ws: null,
+  streamPlayer: null,
+};
+
+const EXAMPLES = {
+  English: "Hello, this is a demonstration of BabelVox text to speech.",
+  Chinese: "\u4f60\u597d\uff0c\u8fd9\u662fBabelVox\u6587\u672c\u8f6c\u8bed\u97f3\u7684\u6f14\u793a\u3002",
+  French: "Bonjour, ceci est une d\u00e9monstration de BabelVox.",
+  German: "Hallo, dies ist eine Demonstration von BabelVox.",
+  Italian: "Ciao, questa \u00e8 una dimostrazione di BabelVox.",
+  Japanese: "\u3053\u3093\u306b\u3061\u306f\u3001\u3053\u308c\u306fBabelVox\u306e\u30c6\u30ad\u30b9\u30c8\u8aad\u307f\u4e0a\u3052\u306e\u30c7\u30e2\u3067\u3059\u3002",
+  Korean: "\uc548\ub155\ud558\uc138\uc694, BabelVox \ud14d\uc2a4\ud2b8 \uc74c\uc131 \ubcc0\ud658 \ub370\ubaa8\uc785\ub2c8\ub2e4.",
+  Portuguese: "Ol\u00e1, esta \u00e9 uma demonstra\u00e7\u00e3o do BabelVox.",
+  Russian: "\u0417\u0434\u0440\u0430\u0432\u0441\u0442\u0432\u0443\u0439\u0442\u0435, \u044d\u0442\u043e \u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u044f BabelVox.",
+  Spanish: "Hola, esta es una demostraci\u00f3n de BabelVox.",
+};
+
+const SSML_SNIPPETS = {
+  break: '<break time="500ms"/>',
+  sub: '<sub alias="World Wide Web">WWW</sub>',
+  number: '<say-as interpret-as="number">$4.50</say-as>',
+  date: '<say-as interpret-as="date" format="mdy">03/20/2026</say-as>',
+  telephone: '<say-as interpret-as="telephone">555-123-4567</say-as>',
+  spell: '<say-as interpret-as="spell-out">NASA</say-as>',
+  emphasis: '<emphasis>important</emphasis>',
+  template: `<speak>
+Hello, welcome to BabelVox.
+<break time="500ms"/>
+The price is <say-as interpret-as="number">$4.50</say-as>.
+<break time="300ms"/>
+Call us at <say-as interpret-as="telephone">555-123-4567</say-as>.
+<sub alias="World Wide Web">WWW</sub> is great.
+</speak>`,
+};
+
+// ── API ──────────────────────────────────────────────────────────────
+const API = {
+  get baseUrl() {
+    return window.location.origin;
+  },
+
+  log(method, path, detail) {
+    const el = document.getElementById('reqLog');
+    const ts = new Date().toLocaleTimeString();
+    el.textContent += `[${ts}] ${method} ${path}`;
+    if (detail) el.textContent += ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+    el.textContent += '\n';
+    el.scrollTop = el.scrollHeight;
+  },
+
+  async synthesize(params) {
+    this.log('POST', '/tts', {text: params.text?.substring(0,40)+'...'});
+    const resp = await fetch(`${this.baseUrl}/tts`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: resp.statusText}));
+      throw new Error(err.error || resp.statusText);
+    }
+    return resp.blob();
+  },
+
+  async batchSynthesize(items) {
+    this.log('POST', '/tts/batch', `${items.length} items`);
+    const resp = await fetch(`${this.baseUrl}/tts/batch`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({items}),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: resp.statusText}));
+      throw new Error(err.error || resp.statusText);
+    }
+    return resp.json();
+  },
+
+  async longformSynthesize(params) {
+    this.log('POST', '/tts/longform', {strategy: params.strategy});
+    const resp = await fetch(`${this.baseUrl}/tts/longform`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: resp.statusText}));
+      throw new Error(err.error || resp.statusText);
+    }
+    return resp.blob();
+  },
+
+  streamSSE(params) {
+    const qs = new URLSearchParams();
+    qs.set('text', params.text);
+    if (params.language) qs.set('language', params.language);
+    if (params.speaker) qs.set('speaker', params.speaker);
+    if (params.format) qs.set('format', params.format);
+    if (params.prosody) qs.set('prosody', JSON.stringify(params.prosody));
+    const url = `${this.baseUrl}/tts/stream?${qs}`;
+    this.log('GET', '/tts/stream', `format=${params.format}`);
+    return new EventSource(url);
+  },
+
+  longformStreamSSE(params) {
+    const qs = new URLSearchParams();
+    qs.set('text', params.text);
+    if (params.strategy) qs.set('strategy', params.strategy);
+    if (params.language) qs.set('language', params.language);
+    if (params.speaker) qs.set('speaker', params.speaker);
+    if (params.format) qs.set('format', params.format);
+    const url = `${this.baseUrl}/tts/longform/stream?${qs}`;
+    this.log('GET', '/tts/longform/stream', `strategy=${params.strategy}`);
+    return new EventSource(url);
+  },
+
+  async listSpeakers() {
+    this.log('GET', '/speakers');
+    const resp = await fetch(`${this.baseUrl}/speakers`);
+    if (!resp.ok) throw new Error('Failed to list speakers');
+    return resp.json();
+  },
+
+  async deleteSpeaker(name) {
+    this.log('DELETE', `/speakers/${name}`);
+    const resp = await fetch(`${this.baseUrl}/speakers/${encodeURIComponent(name)}`, {method: 'DELETE'});
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: resp.statusText}));
+      throw new Error(err.error || resp.statusText);
+    }
+    return resp.json();
+  },
+
+  async health() {
+    const resp = await fetch(`${this.baseUrl}/health`);
+    return resp.json();
+  },
+};
+
+// ── Stream Player (Web Audio API) ────────────────────────────────────
+class StreamPlayer {
+  constructor(sampleRate = 24000) {
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)({sampleRate});
+    this.sampleRate = sampleRate;
+    this.nextTime = 0;
+    this.allSamples = [];
+  }
+
+  scheduleChunk(int16Data) {
+    const float32 = new Float32Array(int16Data.length);
+    for (let i = 0; i < int16Data.length; i++) {
+      float32[i] = int16Data[i] / 32768.0;
+    }
+    const buffer = this.ctx.createBuffer(1, float32.length, this.sampleRate);
+    buffer.getChannelData(0).set(float32);
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.ctx.destination);
+    const start = Math.max(this.ctx.currentTime + 0.05, this.nextTime);
+    source.start(start);
+    this.nextTime = start + buffer.duration;
+    this.allSamples.push(float32);
+  }
+
+  getAllSamples() {
+    if (this.allSamples.length === 0) return new Float32Array(0);
+    const total = this.allSamples.reduce((s, a) => s + a.length, 0);
+    const out = new Float32Array(total);
+    let off = 0;
+    for (const chunk of this.allSamples) {
+      out.set(chunk, off);
+      off += chunk.length;
+    }
+    return out;
+  }
+
+  reset() {
+    this.nextTime = 0;
+    this.allSamples = [];
+  }
+
+  close() {
+    this.ctx.close();
+  }
+}
+
+// ── Waveform Renderer ────────────────────────────────────────────────
+function drawWaveform(canvas, samples, color = '#00d4ff') {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  ctx.fillRect(0, 0, w, h);
+
+  if (!samples || samples.length === 0) return;
+
+  const mid = h / 2;
+  const samplesPerPx = Math.max(1, Math.floor(samples.length / w));
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+
+  for (let x = 0; x < w; x++) {
+    const start = x * samplesPerPx;
+    const end = Math.min(start + samplesPerPx, samples.length);
+    let min = 1, max = -1;
+    for (let i = start; i < end; i++) {
+      if (samples[i] < min) min = samples[i];
+      if (samples[i] > max) max = samples[i];
+    }
+    const y1 = mid - max * mid * 0.9;
+    const y2 = mid - min * mid * 0.9;
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x, y2);
+  }
+  ctx.stroke();
+
+  // Center line
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.beginPath();
+  ctx.moveTo(0, mid);
+  ctx.lineTo(w, mid);
+  ctx.stroke();
+}
+
+async function drawWaveformFromBlob(canvas, blob) {
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const arrayBuf = await blob.arrayBuffer();
+  const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+  const samples = audioBuf.getChannelData(0);
+  drawWaveform(canvas, samples);
+  audioCtx.close();
+}
+
+// ── Tab Navigation ──────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.sidebar button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name)?.classList.add('active');
+  const btns = document.querySelectorAll('.sidebar button');
+  const tabNames = ['basic','prosody','ssml','sse','ws','longform','batch','speakers','config'];
+  const idx = tabNames.indexOf(name);
+  if (idx >= 0 && btns[idx]) btns[idx].classList.add('active');
+
+  if (name === 'speakers') loadSpeakers();
+}
+
+function showSubTab(prefix, name, btn) {
+  const parent = btn.closest('.tab-content');
+  parent.querySelectorAll('.sub-content').forEach(c => c.classList.remove('active'));
+  parent.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById(`${prefix}-${name}`)?.classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+function fillExample(textId, lang) {
+  document.getElementById(textId).value = EXAMPLES[lang] || EXAMPLES.English;
+}
+
+function getSampling() {
+  return {...State.sampling};
+}
+
+function setStatus(id, msg, type = '') {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status-msg' + (type ? ' ' + type : '');
+}
+
+function setDisabled(id, disabled) {
+  document.getElementById(id).disabled = disabled;
+}
+
+function playBlob(audioId, blob) {
+  const audio = document.getElementById(audioId);
+  if (audio.src) URL.revokeObjectURL(audio.src);
+  audio.src = URL.createObjectURL(blob);
+  audio.parentElement.style.display = 'block';
+}
+
+function populateSpeakerDropdowns() {
+  const selects = document.querySelectorAll('select[id$="Speaker"]');
+  selects.forEach(sel => {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Default</option>';
+    State.speakers.forEach(sp => {
+      const opt = document.createElement('option');
+      opt.value = sp.name;
+      opt.textContent = sp.name + (sp.language ? ` (${sp.language})` : '');
+      sel.appendChild(opt);
+    });
+    sel.value = current || '';
+  });
+}
+
+function base64ToInt16(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Int16Array(bytes.buffer);
+}
+
+function base64ToBlob(b64, type = 'audio/wav') {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], {type});
+}
+
+// ── Basic TTS ────────────────────────────────────────────────────────
+async function generateBasic() {
+  const text = document.getElementById('basicText').value.trim();
+  if (!text) return;
+  setDisabled('basicGenBtn', true);
+  setStatus('basicStatus', 'Generating...', '');
+  const t0 = performance.now();
+  try {
+    const params = {
+      text,
+      language: document.getElementById('basicLang').value,
+      ...getSampling(),
+    };
+    const speaker = document.getElementById('basicSpeaker').value;
+    if (speaker) params.speaker = speaker;
+    const blob = await API.synthesize(params);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    playBlob('basicAudio', blob);
+    drawWaveformFromBlob(document.getElementById('basicWaveform'), blob);
+    setStatus('basicStatus', `Generated in ${elapsed}s`, 'success');
+  } catch (e) {
+    setStatus('basicStatus', e.message, 'error');
+  } finally {
+    setDisabled('basicGenBtn', false);
+  }
+}
+
+// ── Prosody ──────────────────────────────────────────────────────────
+function selectEmotion(btn, emotion) {
+  document.querySelectorAll('#emotionBtns .emotion-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  State.selectedEmotion = emotion;
+}
+
+function resetProsody() {
+  document.getElementById('prosRate').value = 1.0;
+  document.getElementById('prosRateVal').textContent = '1.0';
+  document.getElementById('prosPitch').value = 0;
+  document.getElementById('prosPitchVal').textContent = '0';
+  document.getElementById('prosVol').value = 1.0;
+  document.getElementById('prosVolVal').textContent = '1.0';
+  State.selectedEmotion = null;
+  document.querySelectorAll('#emotionBtns .emotion-btn').forEach(b => b.classList.remove('active'));
+}
+
+async function generateProsody() {
+  const text = document.getElementById('prosText').value.trim();
+  if (!text) return;
+  setDisabled('prosGenBtn', true);
+  setStatus('prosStatus', 'Generating...', '');
+  const t0 = performance.now();
+  try {
+    const prosody = {
+      rate: parseFloat(document.getElementById('prosRate').value),
+      pitch_semitones: parseFloat(document.getElementById('prosPitch').value),
+      volume: parseFloat(document.getElementById('prosVol').value),
+    };
+    if (State.selectedEmotion) prosody.emotion = State.selectedEmotion;
+    const params = {
+      text,
+      language: document.getElementById('prosLang').value,
+      prosody,
+      ...getSampling(),
+    };
+    const speaker = document.getElementById('prosSpeaker').value;
+    if (speaker) params.speaker = speaker;
+    const blob = await API.synthesize(params);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    playBlob('prosAudio', blob);
+    drawWaveformFromBlob(document.getElementById('prosWaveform'), blob);
+    setStatus('prosStatus', `Generated in ${elapsed}s`, 'success');
+  } catch (e) {
+    setStatus('prosStatus', e.message, 'error');
+  } finally {
+    setDisabled('prosGenBtn', false);
+  }
+}
+
+// ── SSML ─────────────────────────────────────────────────────────────
+function insertSSML(key) {
+  const ta = document.getElementById('ssmlText');
+  const snippet = SSML_SNIPPETS[key];
+  if (key === 'template') {
+    ta.value = snippet;
+  } else {
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    ta.value = ta.value.substring(0, start) + snippet + ta.value.substring(end);
+    ta.selectionStart = ta.selectionEnd = start + snippet.length;
+    ta.focus();
+  }
+}
+
+async function generateSSML() {
+  let text = document.getElementById('ssmlText').value.trim();
+  if (!text) return;
+  if (!text.startsWith('<speak>')) text = `<speak>${text}</speak>`;
+  setDisabled('ssmlGenBtn', true);
+  setStatus('ssmlStatus', 'Generating...', '');
+  const t0 = performance.now();
+  try {
+    const params = {
+      text,
+      language: document.getElementById('ssmlLang').value,
+      ssml: true,
+      ...getSampling(),
+    };
+    const speaker = document.getElementById('ssmlSpeaker').value;
+    if (speaker) params.speaker = speaker;
+    const blob = await API.synthesize(params);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    playBlob('ssmlAudio', blob);
+    drawWaveformFromBlob(document.getElementById('ssmlWaveform'), blob);
+    setStatus('ssmlStatus', `Generated in ${elapsed}s`, 'success');
+  } catch (e) {
+    setStatus('ssmlStatus', e.message, 'error');
+  } finally {
+    setDisabled('ssmlGenBtn', false);
+  }
+}
+
+// ── SSE Streaming ────────────────────────────────────────────────────
+function startSSE() {
+  const text = document.getElementById('sseText').value.trim();
+  if (!text) return;
+  const fmt = document.getElementById('sseFormat').value;
+  const lang = document.getElementById('sseLang').value;
+  const speaker = document.getElementById('sseSpeaker').value;
+
+  setDisabled('sseStartBtn', true);
+  setDisabled('sseStopBtn', false);
+  setStatus('sseStatus', 'Connecting...', '');
+  document.getElementById('ssePlayer').style.display = 'none';
+
+  let chunks = 0, bytes = 0;
+  let wavChunks = [];
+  let player = null;
+  const t0 = performance.now();
+
+  const params = {text, language: lang, format: fmt};
+  if (speaker) params.speaker = speaker;
+  const es = API.streamSSE(params);
+  State.sseSource = es;
+
+  es.addEventListener('start', (e) => {
+    const data = JSON.parse(e.data);
+    if (fmt === 'pcm_s16le') {
+      player = new StreamPlayer(data.sample_rate || 24000);
+      State.streamPlayer = player;
+    }
+    setStatus('sseStatus', 'Streaming...', '');
+  });
+
+  es.addEventListener('audio', (e) => {
+    chunks++;
+    const b64 = e.data;
+    bytes += b64.length * 0.75;
+    if (fmt === 'pcm_s16le' && player) {
+      const pcm = base64ToInt16(b64);
+      player.scheduleChunk(pcm);
+      drawWaveform(document.getElementById('sseWaveform'), player.getAllSamples());
+    } else {
+      wavChunks.push(b64);
+    }
+    document.getElementById('sseStats').textContent =
+      `Chunks: ${chunks} | ~${(bytes/1024).toFixed(1)} KB`;
+  });
+
+  es.addEventListener('done', (e) => {
+    const data = JSON.parse(e.data);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    setStatus('sseStatus',
+      `Done in ${elapsed}s | Audio: ${data.total_duration_secs}s`, 'success');
+    es.close();
+    sseCleanup();
+    if (fmt === 'wav_chunks' && wavChunks.length > 0) {
+      // Combine WAV chunks — use the last one which has full audio
+      // Actually each chunk is a separate WAV, concat the PCM
+      const blob = base64ToBlob(wavChunks[wavChunks.length - 1]);
+      playBlob('sseAudio', blob);
+      document.getElementById('ssePlayer').style.display = 'block';
+    } else if (player) {
+      // Create WAV from accumulated PCM for download/replay
+      const samples = player.getAllSamples();
+      if (samples.length > 0) {
+        drawWaveform(document.getElementById('sseWaveform'), samples);
+      }
+    }
+  });
+
+  es.addEventListener('error', (e) => {
+    if (e.data) {
+      const data = JSON.parse(e.data);
+      setStatus('sseStatus', data.message || 'Stream error', 'error');
+    }
+    es.close();
+    sseCleanup();
+  });
+
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) return;
+    setStatus('sseStatus', 'Connection error', 'error');
+    es.close();
+    sseCleanup();
+  };
+}
+
+function stopSSE() {
+  if (State.sseSource) {
+    State.sseSource.close();
+    State.sseSource = null;
+  }
+  sseCleanup();
+  setStatus('sseStatus', 'Stopped', '');
+}
+
+function sseCleanup() {
+  setDisabled('sseStartBtn', false);
+  setDisabled('sseStopBtn', true);
+  State.sseSource = null;
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────
+function connectWS() {
+  const port = document.getElementById('wsPort').value || '8766';
+  const host = window.location.hostname || 'localhost';
+  const url = `ws://${host}:${port}`;
+
+  setWsStatus('connecting');
+  try {
+    const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      State.ws = ws;
+      setWsStatus('connected');
+      setDisabled('wsConnBtn', true);
+      setDisabled('wsDiscBtn', false);
+      setDisabled('wsSendBtn', false);
+      API.log('WS', 'CONNECT', url);
+    };
+
+    ws.onclose = () => {
+      State.ws = null;
+      setWsStatus('disconnected');
+      setDisabled('wsConnBtn', false);
+      setDisabled('wsDiscBtn', true);
+      setDisabled('wsSendBtn', true);
+      setDisabled('wsCancelBtn', true);
+    };
+
+    ws.onerror = () => {
+      setStatus('wsStatus', 'Connection failed', 'error');
+    };
+
+    let player = null;
+    let chunks = 0, bytes = 0;
+
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        const msg = JSON.parse(e.data);
+        if (msg.event === 'start') {
+          player = new StreamPlayer(msg.sample_rate || 24000);
+          State.streamPlayer = player;
+          chunks = 0; bytes = 0;
+          setStatus('wsStatus', 'Streaming...', '');
+          setDisabled('wsCancelBtn', false);
+        } else if (msg.event === 'done') {
+          setStatus('wsStatus',
+            `Done | Audio: ${msg.total_duration_secs}s`, 'success');
+          setDisabled('wsCancelBtn', true);
+          if (player) {
+            drawWaveform(document.getElementById('wsWaveform'), player.getAllSamples());
+          }
+        } else if (msg.event === 'error') {
+          setStatus('wsStatus', msg.message || 'Error', 'error');
+          setDisabled('wsCancelBtn', true);
+        }
+      } else {
+        // Binary audio chunk
+        chunks++;
+        bytes += e.data.byteLength;
+        if (player) {
+          const pcm = new Int16Array(e.data);
+          player.scheduleChunk(pcm);
+          drawWaveform(document.getElementById('wsWaveform'), player.getAllSamples());
+        }
+        document.getElementById('wsStats').textContent =
+          `Chunks: ${chunks} | ${(bytes/1024).toFixed(1)} KB`;
+      }
+    };
+  } catch (e) {
+    setStatus('wsStatus', e.message, 'error');
+    setWsStatus('disconnected');
+  }
+}
+
+function disconnectWS() {
+  if (State.ws) State.ws.close();
+}
+
+function sendWS() {
+  if (!State.ws) return;
+  const text = document.getElementById('wsText').value.trim();
+  if (!text) return;
+  const msg = {
+    text,
+    language: document.getElementById('wsLang').value,
+    format: document.getElementById('wsFormat').value,
+  };
+  const speaker = document.getElementById('wsSpeaker').value;
+  if (speaker) msg.speaker = speaker;
+  State.ws.send(JSON.stringify(msg));
+  API.log('WS', 'SEND', {text: text.substring(0, 40)});
+  setStatus('wsStatus', 'Sent request...', '');
+}
+
+function cancelWS() {
+  if (State.ws) {
+    State.ws.send(JSON.stringify({event: 'cancel'}));
+    API.log('WS', 'CANCEL');
+    setStatus('wsStatus', 'Cancelled', '');
+    setDisabled('wsCancelBtn', true);
+  }
+}
+
+function setWsStatus(state) {
+  const dot = document.getElementById('wsConnDot');
+  const label = document.getElementById('wsConnLabel');
+  dot.className = 'conn-dot ' + (state === 'connected' ? 'connected' : state === 'connecting' ? 'connecting' : '');
+  label.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+}
+
+// ── Long-form ────────────────────────────────────────────────────────
+async function generateLongform() {
+  const text = document.getElementById('lfText').value.trim();
+  if (!text) return;
+  setDisabled('lfPostBtn', true);
+  setStatus('lfPostStatus', 'Generating (this may take a while)...', '');
+  const t0 = performance.now();
+  try {
+    const params = {
+      text,
+      strategy: document.getElementById('lfStrategy').value,
+      language: document.getElementById('lfLang').value,
+      ...getSampling(),
+    };
+    const speaker = document.getElementById('lfSpeaker').value;
+    if (speaker) params.speaker = speaker;
+    const blob = await API.longformSynthesize(params);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    playBlob('lfPostAudio', blob);
+    drawWaveformFromBlob(document.getElementById('lfPostWaveform'), blob);
+    setStatus('lfPostStatus', `Generated in ${elapsed}s`, 'success');
+  } catch (e) {
+    setStatus('lfPostStatus', e.message, 'error');
+  } finally {
+    setDisabled('lfPostBtn', false);
+  }
+}
+
+function startLongformSSE() {
+  const text = document.getElementById('lfText').value.trim();
+  if (!text) return;
+  if (text.length > 6000) {
+    setStatus('lfSseStatus', 'Warning: text may be too long for GET query string. Consider POST mode.', 'error');
+  }
+
+  setDisabled('lfSseStartBtn', true);
+  setDisabled('lfSseStopBtn', false);
+  setStatus('lfSseStatus', 'Connecting...', '');
+  document.getElementById('lfSsePlayer').style.display = 'none';
+  document.getElementById('lfProgressFill').style.width = '0%';
+
+  let player = null;
+
+  const params = {
+    text,
+    strategy: document.getElementById('lfStrategy').value,
+    language: document.getElementById('lfLang').value,
+    format: 'pcm_s16le',
+  };
+  const speaker = document.getElementById('lfSpeaker').value;
+  if (speaker) params.speaker = speaker;
+
+  const es = API.longformStreamSSE(params);
+  State.lfSseSource = es;
+
+  es.addEventListener('start', (e) => {
+    const data = JSON.parse(e.data);
+    player = new StreamPlayer(24000);
+    State.streamPlayer = player;
+    setStatus('lfSseStatus', `Streaming ${data.total_segments} segments...`, '');
+  });
+
+  es.addEventListener('segment', (e) => {
+    const pcm = base64ToInt16(e.data);
+    if (player) {
+      player.scheduleChunk(pcm);
+      drawWaveform(document.getElementById('lfSseWaveform'), player.getAllSamples());
+    }
+  });
+
+  es.addEventListener('progress', (e) => {
+    const data = JSON.parse(e.data);
+    const pct = (data.completed / data.total * 100).toFixed(0);
+    document.getElementById('lfProgressFill').style.width = pct + '%';
+    document.getElementById('lfSseStats').textContent =
+      `Segment ${data.completed}/${data.total} | Audio: ${data.audio_secs}s`;
+  });
+
+  es.addEventListener('done', (e) => {
+    const data = JSON.parse(e.data);
+    document.getElementById('lfProgressFill').style.width = '100%';
+    setStatus('lfSseStatus', `Done | Total: ${data.total_duration_secs}s`, 'success');
+    es.close();
+    lfSseCleanup();
+    if (player) {
+      drawWaveform(document.getElementById('lfSseWaveform'), player.getAllSamples());
+    }
+  });
+
+  es.addEventListener('error', (e) => {
+    if (e.data) {
+      const data = JSON.parse(e.data);
+      setStatus('lfSseStatus', data.message || 'Stream error', 'error');
+    }
+    es.close();
+    lfSseCleanup();
+  });
+
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) return;
+    setStatus('lfSseStatus', 'Connection error', 'error');
+    es.close();
+    lfSseCleanup();
+  };
+}
+
+function stopLongformSSE() {
+  if (State.lfSseSource) {
+    State.lfSseSource.close();
+    State.lfSseSource = null;
+  }
+  lfSseCleanup();
+  setStatus('lfSseStatus', 'Stopped', '');
+}
+
+function lfSseCleanup() {
+  setDisabled('lfSseStartBtn', false);
+  setDisabled('lfSseStopBtn', true);
+  State.lfSseSource = null;
+}
+
+// ── Batch ────────────────────────────────────────────────────────────
+function addBatchItem() {
+  const container = document.getElementById('batchItems');
+  const div = document.createElement('div');
+  div.className = 'batch-item';
+  div.innerHTML = `
+    <input type="text" placeholder="Text..." value="">
+    <select>
+      <option value="English">English</option>
+      <option value="Chinese">Chinese</option>
+      <option value="French">French</option>
+      <option value="German">German</option>
+      <option value="Italian">Italian</option>
+      <option value="Japanese">Japanese</option>
+      <option value="Korean">Korean</option>
+      <option value="Portuguese">Portuguese</option>
+      <option value="Russian">Russian</option>
+      <option value="Spanish">Spanish</option>
+    </select>
+    <button class="btn btn-danger btn-sm" onclick="removeBatchItem(this)">X</button>`;
+  container.appendChild(div);
+}
+
+function removeBatchItem(btn) {
+  const container = document.getElementById('batchItems');
+  if (container.children.length > 1) {
+    btn.closest('.batch-item').remove();
+  }
+}
+
+async function generateBatch() {
+  const items = [];
+  document.querySelectorAll('#batchItems .batch-item').forEach(row => {
+    const text = row.querySelector('input').value.trim();
+    const lang = row.querySelector('select').value;
+    if (text) items.push({text, language: lang, ...getSampling()});
+  });
+  if (items.length === 0) return;
+
+  setDisabled('batchGenBtn', true);
+  setStatus('batchStatus', `Generating ${items.length} items...`, '');
+  document.getElementById('batchResults').innerHTML = '';
+
+  try {
+    const data = await API.batchSynthesize(items);
+    const results = data.results || [];
+    const container = document.getElementById('batchResults');
+    let ok = 0, fail = 0, totalDur = 0;
+
+    results.forEach((r) => {
+      const div = document.createElement('div');
+      div.className = 'batch-result';
+      if (r.error) {
+        fail++;
+        div.innerHTML = `<span class="idx">#${r.index + 1}</span>
+          <span class="err">${r.error}</span>`;
+      } else {
+        ok++;
+        totalDur += r.duration_secs || 0;
+        const blob = base64ToBlob(r.audio);
+        const url = URL.createObjectURL(blob);
+        div.innerHTML = `<span class="idx">#${r.index + 1}</span>
+          <audio controls src="${url}" style="height:32px;flex:1"></audio>
+          <span class="dur">${(r.duration_secs||0).toFixed(1)}s</span>`;
+      }
+      container.appendChild(div);
+    });
+
+    setStatus('batchStatus',
+      `Done: ${ok} succeeded, ${fail} failed | Total audio: ${totalDur.toFixed(1)}s`, 'success');
+  } catch (e) {
+    setStatus('batchStatus', e.message, 'error');
+  } finally {
+    setDisabled('batchGenBtn', false);
+  }
+}
+
+// ── Speakers ─────────────────────────────────────────────────────────
+async function loadSpeakers() {
+  setStatus('speakerStatus', 'Loading...', '');
+  try {
+    State.speakers = await API.listSpeakers();
+    renderSpeakers();
+    populateSpeakerDropdowns();
+    setStatus('speakerStatus',
+      State.speakers.length > 0
+        ? `${State.speakers.length} speaker(s) loaded`
+        : 'No speaker profiles saved yet',
+      State.speakers.length > 0 ? 'success' : '');
+  } catch (e) {
+    setStatus('speakerStatus', e.message, 'error');
+  }
+}
+
+function renderSpeakers() {
+  const container = document.getElementById('speakerList');
+  container.innerHTML = '';
+  if (State.speakers.length === 0) {
+    container.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">No speakers found.</div>';
+    return;
+  }
+  State.speakers.forEach(sp => {
+    const div = document.createElement('div');
+    div.className = 'speaker-card';
+    const tags = (sp.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
+    div.innerHTML = `
+      <div class="info">
+        <div class="name">${sp.name}</div>
+        <div class="meta">
+          ${sp.language || ''} ${sp.gender ? '| ' + sp.gender : ''}
+          ${sp.description ? '| ' + sp.description : ''}
+        </div>
+        ${tags ? '<div class="tags">' + tags + '</div>' : ''}
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="deleteSpeaker('${sp.name}')">Delete</button>`;
+    container.appendChild(div);
+  });
+}
+
+async function deleteSpeaker(name) {
+  if (!confirm(`Delete speaker "${name}"?`)) return;
+  try {
+    await API.deleteSpeaker(name);
+    await loadSpeakers();
+  } catch (e) {
+    setStatus('speakerStatus', e.message, 'error');
+  }
+}
+
+// ── Config ───────────────────────────────────────────────────────────
+function updateConfig(key, value) {
+  const num = parseFloat(value);
+  State.sampling[key] = key === 'top_k' || key === 'max_new_tokens' ? parseInt(value) : num;
+  document.getElementById('cfg' + {
+    temperature: 'TempVal', top_k: 'TopKVal', top_p: 'TopPVal',
+    repetition_penalty: 'RepPenVal', max_new_tokens: 'MaxTokVal'
+  }[key]).textContent = value;
+}
+
+async function testConnection() {
+  setStatus('cfgConnStatus', 'Testing...', '');
+  try {
+    const data = await API.health();
+    setStatus('cfgConnStatus', `Connected: ${JSON.stringify(data)}`, 'success');
+  } catch (e) {
+    setStatus('cfgConnStatus', 'Connection failed: ' + e.message, 'error');
+  }
+}
+
+// ── Health Check ─────────────────────────────────────────────────────
+async function checkHealth() {
+  const dot = document.getElementById('healthDot');
+  const sb = document.getElementById('sbStatus');
+  try {
+    await API.health();
+    dot.className = 'health-dot ok';
+    sb.textContent = 'Connected to BabelVox server';
+  } catch {
+    dot.className = 'health-dot err';
+    sb.textContent = 'Server not reachable';
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('cfgBaseUrl').value = API.baseUrl;
+  checkHealth();
+  loadSpeakers();
+  setInterval(checkHealth, 15000);
+});
+</script>
+</body>
+</html>

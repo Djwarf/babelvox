@@ -18,7 +18,7 @@ MAX_REQUEST_BYTES = 1_000_000  # 1 MB
 def _cors_headers(origin="*"):
     return {
         "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
 
@@ -40,6 +40,23 @@ def _wav_response(handler, wav, sr, cors_origin="*"):
     data = buf.getvalue()
     handler.send_response(200)
     handler.send_header("Content-Type", "audio/wav")
+    for k, v in _cors_headers(cors_origin).items():
+        handler.send_header(k, v)
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _serve_static_html(handler, cors_origin="*"):
+    """Serve the bundled demo UI."""
+    html_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    if not os.path.isfile(html_path):
+        _json_response(handler, 404, {"error": "demo UI not installed"}, cors_origin)
+        return
+    with open(html_path, "rb") as f:
+        data = f.read()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
     for k, v in _cors_headers(cors_origin).items():
         handler.send_header(k, v)
     handler.send_header("Content-Length", str(len(data)))
@@ -157,6 +174,13 @@ def handle_sse_stream(handler, tts, cors_origin="*", audio_dir=None):
     parsed = urlparse(handler.path)
     params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
+    # Parse prosody JSON from query string so SSE supports prosody control
+    if "prosody" in params and isinstance(params["prosody"], str):
+        try:
+            params["prosody"] = json.loads(params["prosody"])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
     kwargs, error = validate_tts_params(params, audio_dir=audio_dir)
     if error:
         _json_response(handler, 400, {"error": error}, cors_origin)
@@ -200,7 +224,9 @@ def _make_handler(tts, cors_origin="*", audio_dir=None):
 
         def do_GET(self):
             parsed = urlparse(self.path)
-            if parsed.path == "/health":
+            if parsed.path in ("/", "/ui"):
+                _serve_static_html(self, cors_origin)
+            elif parsed.path == "/health":
                 _json_response(self, 200, {"status": "ok"}, cors_origin)
             elif parsed.path == "/tts/stream":
                 handle_sse_stream(self, tts, cors_origin=cors_origin,
@@ -474,6 +500,7 @@ def serve(tts, host="0.0.0.0", port=8765, cors_origin="*", audio_dir=None):
                                   audio_dir=audio_dir)
     server = HTTPServer((host, port), handler_class)
     logger.info("BabelVox server listening on http://%s:%d", host, port)
+    logger.info("  GET  /                  - demo web UI")
     logger.info("  POST /tts               - synthesize speech")
     logger.info("  POST /tts/batch         - batch synthesis")
     logger.info("  POST /tts/longform      - long-form synthesis")
