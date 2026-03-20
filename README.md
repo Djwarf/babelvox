@@ -137,26 +137,28 @@ Use `"speaker": "alice"` in POST /tts to synthesize with a saved voice.
 
 ### Prosody & emotion control
 
-Control speech rate, pitch, volume, and emotion style:
+Control speech rate, volume, and emotion style:
 
 ```python
 from babelvox import ProsodyConfig
 
-prosody = ProsodyConfig(rate=1.2, pitch_semitones=2, volume=0.8, emotion="happy")
+prosody = ProsodyConfig(rate=1.2, volume=0.8, emotion="happy")
 wav, sr = tts.generate("This is exciting news!", prosody=prosody)
 ```
 
 ```bash
-babelvox --emotion happy --rate 1.2 --pitch 2 --text "Exciting news!" -o happy.wav
+babelvox --emotion happy --rate 1.2 --text "Exciting news!" -o happy.wav
 babelvox --rate 0.8 --volume 0.5 --text "Slow and quiet" -o slow.wav
 ```
 
-**Emotion styles:** `happy`, `sad`, `angry`, `surprised`, `neutral`. Emotion hints are best-effort (text manipulation + sampling adjustment). Rate, pitch, and volume are guaranteed via librosa post-processing.
+**Emotion styles:** `happy`, `sad`, `angry`, `surprised`, `neutral`. Emotion hints are best-effort (text manipulation + sampling adjustment). Rate and volume are guaranteed via waveform post-processing.
+
+> **Note:** Pitch shifting (`pitch_semitones`) is accepted but not applied — the phase vocoder artifacts were too severe for speech. Use `rate` instead, which naturally changes speed and pitch together.
 
 **Server API:**
 ```json
 POST /tts
-{"text": "Hello!", "prosody": {"emotion": "happy", "rate": 1.2, "pitch_semitones": 2}}
+{"text": "Hello!", "prosody": {"emotion": "happy", "rate": 1.2, "volume": 1.0}}
 ```
 
 ### Long-form synthesis
