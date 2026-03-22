@@ -33,6 +33,8 @@ class Segment:
     text: str
     index: int
     type: str = "paragraph"  # "paragraph", "sentence", "chapter_marker"
+    style: str = "narration"  # "narration", "dialogue", "thought", "heading"
+    speaker_gender: str | None = None  # "male", "female" for dialogue speaker switching
 
 
 @dataclass
@@ -169,6 +171,75 @@ def _segment_gap_ms(prev_type: str, curr_type: str) -> int:
     return 300  # sentence-to-sentence
 
 
+# ── Content-adaptive pacing ──────────────────────────────────────────
+
+# Style-specific generation parameters: (rate, temperature, rep_penalty, gap_ms)
+_STYLE_PARAMS = {
+    "dialogue":  (1.05, 1.0,  1.15, 200),
+    "thought":   (0.9,  0.8,  1.0,  400),
+    "heading":   (0.85, 0.75, 1.2,  800),
+    "narration": (1.0,  0.9,  1.05, 300),
+}
+
+
+def _estimate_style(text: str) -> str:
+    """Estimate paragraph style from plain text content."""
+    stripped = text.strip()
+    if not stripped:
+        return "narration"
+    if ((stripped.startswith('"') or stripped.startswith('\u201c'))
+            and ('"' in stripped[1:] or '\u201d' in stripped[1:])):
+        return "dialogue"
+    words = stripped.split()
+    if len(words) <= 6 and stripped[-1:] not in '.!?,;:':
+        return "heading"
+    return "narration"
+
+
+def _dynamic_gap_ms(prev_seg: Segment, curr_seg: Segment) -> int:
+    """Content-aware silence gap between segments."""
+    # Start from style-based gap
+    _, _, _, base_gap = _STYLE_PARAMS.get(prev_seg.style, (1.0, 0.9, 1.05, 300))
+
+    # Type-based overrides (paragraph/chapter boundaries)
+    if prev_seg.type == "chapter_marker" or curr_seg.type == "chapter_marker":
+        base_gap = 1000
+    elif curr_seg.type == "paragraph" and prev_seg.type == "paragraph":
+        base_gap = max(base_gap, 600)
+
+    # Punctuation adjustments
+    prev_end = prev_seg.text.rstrip()
+    if prev_end.endswith('?') or prev_end.endswith('!'):
+        base_gap -= 50
+
+    # Length adjustments
+    word_count = len(prev_seg.text.split())
+    if word_count > 30:
+        base_gap += 100
+    elif word_count < 5:
+        base_gap -= 50
+
+    return max(100, base_gap)
+
+
+def _adaptive_gen_params(seg: Segment, base_seed: int = 42):
+    """Return content-adaptive (rate, temperature, rep_penalty, max_tokens).
+
+    Combines style-based defaults with per-segment seeded jitter.
+    """
+    rate, temp, rep_pen, _ = _STYLE_PARAMS.get(seg.style, (1.0, 0.9, 1.05, 300))
+
+    # Small seeded jitter for natural variation
+    rng = np.random.RandomState(base_seed + seg.index)
+    temp *= (1.0 + rng.uniform(-0.05, 0.05))
+    rate *= (1.0 + rng.uniform(-0.03, 0.03))
+
+    # Scale max_new_tokens by text length
+    max_tokens = max(20, min(512, len(seg.text) // 3 + 30))
+
+    return rate, temp, rep_pen, max_tokens
+
+
 def _soft_onset(wav: np.ndarray, fade_samples: int = 1200) -> np.ndarray:
     """Apply a short fade-in to prevent abrupt onset."""
     n = min(fade_samples, len(wav))
@@ -255,7 +326,7 @@ class LongFormSynthesizer:
             speaker_embed = self.tts.default_speaker
 
         waveforms = []
-        seg_types = []  # track types for gap computation
+        synth_segments = []  # track segments for gap computation
         segment_results = []
         t0 = time.time()
         current_time = 0.0
@@ -263,49 +334,76 @@ class LongFormSynthesizer:
         logger.info("Long-form synthesis: %d segments (%s strategy)",
                      len(segments), strategy)
 
-        prev_type = None
+        prev_seg = None
         for seg in segments[resume_from:]:
             if seg.type == "chapter_marker":
                 segment_results.append(SegmentResult(
                     segment=seg, start_time=current_time,
                     end_time=current_time, duration=0.0))
                 logger.debug("  [%d] chapter marker: %s", seg.index, seg.text)
-                prev_type = "chapter_marker"
+                prev_seg = seg
                 continue
 
             if seed is not None:
                 np.random.seed(seed + seg.index)
 
-            # Per-segment variation to break monotony (Lever 5)
-            seg_embed = speaker_embed
-            seg_temp = None
-            if speaker_embed is not None:
-                rng = np.random.RandomState(42 + seg.index)
-                seg_embed = speaker_embed + (
-                    rng.randn(*speaker_embed.shape).astype(np.float32) * 0.02)
-                seg_temp = 0.9 * (1.0 + rng.uniform(-0.1, 0.1))
+            # Auto-detect style if not set by epub reader
+            if seg.style == "narration":
+                seg.style = _estimate_style(seg.text)
 
-            logger.debug("  [%d] synthesizing: %.60s...", seg.index, seg.text)
-            gen_kwargs = dict(
+            # Content-adaptive generation parameters
+            rate, seg_temp, rep_pen, seg_max_tokens = _adaptive_gen_params(seg)
+            seg_max_tokens = min(seg_max_tokens, max_new_tokens)
+
+            # Speaker selection: gender-based for dialogue, default for narration
+            seg_embed = speaker_embed
+            if (seg.speaker_gender and seg.style == "dialogue"
+                    and self.tts.speaker_library):
+                try:
+                    gender_speakers = self.tts.speaker_library.search(
+                        gender=seg.speaker_gender)
+                    if gender_speakers:
+                        name = gender_speakers[0]["name"]
+                        seg_embed = self.tts.speaker_library.load(name).embedding
+                        logger.debug("    Using speaker '%s' for %s dialogue",
+                                     name, seg.speaker_gender)
+                except Exception:
+                    pass  # fall back to default
+
+            # Per-segment embedding perturbation
+            if seg_embed is not None:
+                rng = np.random.RandomState(42 + seg.index)
+                seg_embed = seg_embed + (
+                    rng.randn(*seg_embed.shape).astype(np.float32) * 0.02)
+
+            # Build prosody with content-adaptive rate
+            from babelvox.prosody import ProsodyConfig
+            seg_prosody = prosody
+            if rate != 1.0:
+                seg_prosody = ProsodyConfig(
+                    rate=rate,
+                    emotion=prosody.emotion if prosody else None,
+                ) if prosody is None or prosody.rate == 1.0 else prosody
+
+            logger.debug("  [%d] %s: %.60s...", seg.index, seg.style, seg.text)
+            wav, sr = self.tts.generate(
                 text=seg.text, language=language,
-                speaker_embed=seg_embed, prosody=prosody,
-                max_new_tokens=max_new_tokens)
-            if seg_temp is not None:
-                gen_kwargs["temperature"] = seg_temp
-            wav, sr = self.tts.generate(**gen_kwargs)
+                speaker_embed=seg_embed, prosody=seg_prosody,
+                max_new_tokens=seg_max_tokens,
+                temperature=seg_temp, repetition_penalty=rep_pen)
 
             duration = len(wav) / sr
             # Account for gap before this segment in timestamps
-            if waveforms and prev_type is not None:
-                gap_secs = _segment_gap_ms(prev_type, seg.type) / 1000.0
+            if waveforms and prev_seg is not None:
+                gap_secs = _dynamic_gap_ms(prev_seg, seg) / 1000.0
                 current_time += gap_secs
             segment_results.append(SegmentResult(
                 segment=seg, start_time=current_time,
                 end_time=current_time + duration, duration=duration))
             current_time += duration
             waveforms.append(wav)
-            seg_types.append(seg.type)
-            prev_type = seg.type
+            synth_segments.append(seg)
+            prev_seg = seg
 
             if progress_callback:
                 progress_callback(SynthesisProgress(
@@ -318,10 +416,10 @@ class LongFormSynthesizer:
         if not waveforms:
             return SynthesisResult(waveform=np.zeros(1, dtype=np.float32))
 
-        # Compute per-gap silence durations based on segment types
+        # Compute per-gap silence durations based on segment content
         gaps_ms = []
-        for i in range(1, len(seg_types)):
-            gaps_ms.append(_segment_gap_ms(seg_types[i - 1], seg_types[i]))
+        for i in range(1, len(synth_segments)):
+            gaps_ms.append(_dynamic_gap_ms(synth_segments[i - 1], synth_segments[i]))
 
         full_wav = crossfade_concat(waveforms, crossfade_samples,
                                     gaps_ms=gaps_ms)
@@ -351,36 +449,59 @@ class LongFormSynthesizer:
         t0 = time.time()
         current_time = 0.0
         completed = 0
-        prev_type = None
+        prev_seg = None
 
         for seg in segments[resume_from:]:
             if seg.type == "chapter_marker":
-                prev_type = "chapter_marker"
+                prev_seg = seg
                 continue
 
             if seed is not None:
                 np.random.seed(seed + seg.index)
 
-            # Per-segment variation (Lever 5)
-            seg_embed = speaker_embed
-            seg_temp = None
-            if speaker_embed is not None:
-                rng = np.random.RandomState(42 + seg.index)
-                seg_embed = speaker_embed + (
-                    rng.randn(*speaker_embed.shape).astype(np.float32) * 0.02)
-                seg_temp = 0.9 * (1.0 + rng.uniform(-0.1, 0.1))
+            # Auto-detect style if not set
+            if seg.style == "narration":
+                seg.style = _estimate_style(seg.text)
 
-            gen_kwargs = dict(
+            # Content-adaptive parameters
+            rate, seg_temp, rep_pen, seg_max_tokens = _adaptive_gen_params(seg)
+            seg_max_tokens = min(seg_max_tokens, max_new_tokens)
+
+            # Speaker selection for dialogue
+            seg_embed = speaker_embed
+            if (seg.speaker_gender and seg.style == "dialogue"
+                    and self.tts.speaker_library):
+                try:
+                    gender_speakers = self.tts.speaker_library.search(
+                        gender=seg.speaker_gender)
+                    if gender_speakers:
+                        name = gender_speakers[0]["name"]
+                        seg_embed = self.tts.speaker_library.load(name).embedding
+                except Exception:
+                    pass
+
+            if seg_embed is not None:
+                rng = np.random.RandomState(42 + seg.index)
+                seg_embed = seg_embed + (
+                    rng.randn(*seg_embed.shape).astype(np.float32) * 0.02)
+
+            from babelvox.prosody import ProsodyConfig
+            seg_prosody = prosody
+            if rate != 1.0:
+                seg_prosody = ProsodyConfig(
+                    rate=rate,
+                    emotion=prosody.emotion if prosody else None,
+                ) if prosody is None or prosody.rate == 1.0 else prosody
+
+            wav, sr = self.tts.generate(
                 text=seg.text, language=language,
-                speaker_embed=seg_embed, prosody=prosody,
-                max_new_tokens=max_new_tokens)
-            if seg_temp is not None:
-                gen_kwargs["temperature"] = seg_temp
-            wav, sr = self.tts.generate(**gen_kwargs)
+                speaker_embed=seg_embed, prosody=seg_prosody,
+                max_new_tokens=seg_max_tokens,
+                temperature=seg_temp, repetition_penalty=rep_pen)
 
             # Append silence gap for natural pacing
-            if prev_type is not None:
-                gap_ms = _segment_gap_ms(prev_type, seg.type)
+            if prev_seg is not None:
+                gap_ms = _dynamic_gap_ms(prev_seg, seg)
                 gap_samples = int(sr * gap_ms / 1000)
                 wav = np.concatenate([np.zeros(gap_samples, dtype=np.float32),
                                       _soft_onset(wav)])
@@ -389,7 +510,7 @@ class LongFormSynthesizer:
 
             current_time += len(wav) / sr
             completed += 1
-            prev_type = seg.type
+            prev_seg = seg
 
             progress = SynthesisProgress(
                 total_segments=len(segments),
