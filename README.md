@@ -180,6 +180,8 @@ babelvox --epub book.epub --chapters 1-5 --speaker lou -o chapters/
 
 The epub reader detects paragraph styles (dialogue, narration, thoughts, headings) and adapts generation parameters automatically — dialogue is slightly faster with more varied intonation, thoughts are slower and more contemplative, headings get deliberate pacing with long pauses after.
 
+Dialogue speaker gender is detected from attribution pronouns (`"Hello," she said` → female voice, `"Hello," he replied` → male voice). Narration uses the `--speaker` you specify; dialogue automatically switches to a matching male or female bundled speaker.
+
 ### Long-form synthesis
 
 Synthesize books, articles, or long texts with automatic segmentation and content-adaptive pacing. Each segment is generated with style-appropriate parameters (rate, temperature, repetition penalty), joined with natural breathing pauses and equal-power crossfade:
@@ -665,9 +667,11 @@ Text --> Tokenizer --> Text Embeddings --> Talker (28L transformer) --> Codec co
 | `--longform` | off | Enable long-form synthesis mode |
 | `--strategy` | `natural` | Segmentation: paragraph, sentence, natural, chapter |
 | `--text-file` | none | Read text from file instead of `--text` |
+| `--epub` | none | Read an epub file and synthesize as audiobook (per-chapter WAV) |
+| `--chapters` | all | Chapter range for `--epub` (e.g. `1-5`, `3`, `1,3,7-10`) |
 | `--split-output` | off | Write individual segment files |
 | `--timestamps` | off | Write timestamps JSON alongside audio |
-| `--output` / `-o` | `output.wav` | Output WAV file path |
+| `--output` / `-o` | `output.wav` | Output WAV file path (directory for `--epub`) |
 | `--export-dir` | auto-download | Directory with exported models (downloads from HuggingFace if not set) |
 | `--model-path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace model (tokenizer) |
 
