@@ -186,11 +186,13 @@ class TestLongFormSynthesizer:
             assert isinstance(progress, SynthesisProgress)
 
     def test_voice_consistency(self):
-        """All generate() calls should use the same speaker_embed."""
+        """All generate() calls should use a speaker_embed close to original."""
         tts = _make_mock_tts()
         embed = np.ones((1, 1024), dtype=np.float32)
         tts.default_speaker = embed
         synth = LongFormSynthesizer(tts)
         synth.synthesize("A.\n\nB.\n\nC.")
         for call in tts.generate.call_args_list:
-            assert np.array_equal(call.kwargs.get("speaker_embed"), embed)
+            seg_embed = call.kwargs.get("speaker_embed")
+            # Per-segment perturbation adds tiny noise (magnitude 0.02)
+            assert np.allclose(seg_embed, embed, atol=0.15)

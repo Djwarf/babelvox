@@ -151,7 +151,15 @@ babelvox --emotion happy --rate 1.2 --text "Exciting news!" -o happy.wav
 babelvox --rate 0.8 --volume 0.5 --text "Slow and quiet" -o slow.wav
 ```
 
-**Emotion styles:** `happy`, `sad`, `angry`, `surprised`, `neutral`. Emotion hints are best-effort (text manipulation + sampling adjustment). Rate and volume are guaranteed via waveform post-processing.
+**Emotion styles:** `happy`, `sad`, `angry`, `surprised`, `neutral`. Emotions use five independent control layers for expressive speech:
+
+| Layer | What it controls |
+|---|---|
+| Activation steering | Embedding-level bias nudges the model toward emotion-characteristic audio |
+| Dynamic sampling | Per-step temperature/repetition\_penalty contours create prosodic shape |
+| Subtalker tuning | Code predictor parameters control voice texture (bright, muted, harsh) |
+| Text manipulation | Punctuation and capitalization patterns cue the model |
+| Long-form variation | Per-segment speaker embedding perturbation prevents monotony |
 
 > **Note:** Pitch shifting (`pitch_semitones`) is accepted but not applied — the phase vocoder artifacts were too severe for speech. Use `rate` instead, which naturally changes speed and pitch together.
 

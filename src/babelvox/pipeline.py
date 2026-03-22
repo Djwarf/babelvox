@@ -762,11 +762,20 @@ class BabelVox:
                 max_new_tokens = effective_max
 
         # Prosody: text manipulation + sampling adjustment
+        _emotion = None
+        _emotion_bias = None
         if prosody is not None:
-            from babelvox.prosody import adjust_sampling_for_emotion, apply_text_prosody
+            from babelvox.prosody import (
+                adjust_sampling_for_emotion,
+                apply_text_prosody,
+                get_emotion_bias,
+            )
             text = apply_text_prosody(text, prosody)
-            temperature, top_k = adjust_sampling_for_emotion(
-                prosody.emotion, temperature, top_k)
+            temperature, top_k, repetition_penalty, subtalker_temperature, subtalker_top_k = (
+                adjust_sampling_for_emotion(
+                    prosody.emotion, temperature, top_k, repetition_penalty))
+            _emotion = prosody.emotion
+            _emotion_bias = get_emotion_bias(prosody.emotion)
 
         if speaker is not None and speaker_embed is None:
             if self.speaker_library is None:
@@ -875,18 +884,26 @@ class BabelVox:
                     break
                 logits, hidden = self._run_talker(seq_embeds, real_len)
 
+            # Dynamic per-step sampling (Lever 2)
+            if _emotion is not None:
+                from babelvox.prosody import emotion_schedule
+                step_temp, step_rep_pen, step_top_k = emotion_schedule(
+                    _emotion, step, temperature, repetition_penalty, top_k)
+            else:
+                step_temp, step_rep_pen, step_top_k = temperature, repetition_penalty, top_k
+
             raw_logits = logits[0, 0, :] if logits.ndim == 3 else logits.squeeze()
             raw_logits = self._apply_repetition_penalty(
-                raw_logits.copy(), generated_ids, repetition_penalty)
+                raw_logits.copy(), generated_ids, step_rep_pen)
             code_0 = self._sample_token(
-                raw_logits, temperature=temperature, top_k=top_k, top_p=top_p)
+                raw_logits, temperature=step_temp, top_k=step_top_k, top_p=top_p)
 
             if code_0 == self.codec_eos_id:
                 break
 
             generated_ids.append(code_0)
 
-            # Code predictor
+            # Code predictor (Lever 3: emotion-tuned subtalker params)
             code_groups = [code_0]
             code_0_embed = self.codec_emb[[code_0]][np.newaxis, :, :]
             cp_input = np.concatenate([hidden, code_0_embed], axis=1)
@@ -946,6 +963,10 @@ class BabelVox:
                 combined = combined + trailing_text[:, step:step+1]
             else:
                 combined = combined + tts_pad_embed
+
+            # Activation steering (Lever 1)
+            if _emotion_bias is not None:
+                combined = combined + _emotion_bias
 
             if not self.use_kv_cache:
                 seq_embeds = np.concatenate([seq_embeds, combined], axis=1)
@@ -1015,11 +1036,20 @@ class BabelVox:
                 max_new_tokens = effective_max
 
         # Prosody: text manipulation + sampling adjustment
+        _emotion = None
+        _emotion_bias = None
         if prosody is not None:
-            from babelvox.prosody import adjust_sampling_for_emotion, apply_text_prosody
+            from babelvox.prosody import (
+                adjust_sampling_for_emotion,
+                apply_text_prosody,
+                get_emotion_bias,
+            )
             text = apply_text_prosody(text, prosody)
-            temperature, top_k = adjust_sampling_for_emotion(
-                prosody.emotion, temperature, top_k)
+            temperature, top_k, repetition_penalty, subtalker_temperature, subtalker_top_k = (
+                adjust_sampling_for_emotion(
+                    prosody.emotion, temperature, top_k, repetition_penalty))
+            _emotion = prosody.emotion
+            _emotion_bias = get_emotion_bias(prosody.emotion)
 
         # Speaker: named > ref_audio > explicit embed > default
         if speaker is not None and speaker_embed is None:
@@ -1089,13 +1119,20 @@ class BabelVox:
                     break
                 logits, hidden = self._run_talker(seq_embeds, real_len)
 
-            # --- Sample code_0 ---
+            # --- Sample code_0 (dynamic per-step sampling, Lever 2) ---
+            if _emotion is not None:
+                from babelvox.prosody import emotion_schedule
+                step_temp, step_rep_pen, step_top_k = emotion_schedule(
+                    _emotion, step, temperature, repetition_penalty, top_k)
+            else:
+                step_temp, step_rep_pen, step_top_k = temperature, repetition_penalty, top_k
+
             raw_logits = logits[0, 0, :] if logits.ndim == 3 else logits.squeeze()
             raw_logits = self._apply_repetition_penalty(
-                raw_logits.copy(), generated_ids, repetition_penalty)
+                raw_logits.copy(), generated_ids, step_rep_pen)
 
             code_0 = self._sample_token(
-                raw_logits, temperature=temperature, top_k=top_k, top_p=top_p)
+                raw_logits, temperature=step_temp, top_k=step_top_k, top_p=top_p)
 
             if code_0 == self.codec_eos_id:
                 logger.debug("EOS at step %d", step)
@@ -1103,7 +1140,7 @@ class BabelVox:
 
             generated_ids.append(code_0)
 
-            # --- Code Predictor: generate code_groups 1..15 ---
+            # --- Code Predictor: generate code_groups 1..15 (Lever 3) ---
             code_groups = [code_0]
             code_0_embed = self.codec_emb[[code_0]][np.newaxis, :, :]  # (1,1,1024)
             cp_input = np.concatenate([hidden, code_0_embed], axis=1)  # (1,2,1024)
@@ -1159,6 +1196,10 @@ class BabelVox:
                 combined = combined + trailing_text[:, step:step+1]
             else:
                 combined = combined + tts_pad_embed
+
+            # Activation steering (Lever 1)
+            if _emotion_bias is not None:
+                combined = combined + _emotion_bias
 
             if not self.use_kv_cache:
                 seq_embeds = np.concatenate([seq_embeds, combined], axis=1)

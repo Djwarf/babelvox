@@ -231,11 +231,23 @@ class LongFormSynthesizer:
             if seed is not None:
                 np.random.seed(seed + seg.index)
 
+            # Per-segment variation to break monotony (Lever 5)
+            seg_embed = speaker_embed
+            seg_temp = None
+            if speaker_embed is not None:
+                rng = np.random.RandomState(42 + seg.index)
+                seg_embed = speaker_embed + (
+                    rng.randn(*speaker_embed.shape).astype(np.float32) * 0.02)
+                seg_temp = 0.9 * (1.0 + rng.uniform(-0.1, 0.1))
+
             logger.debug("  [%d] synthesizing: %.60s...", seg.index, seg.text)
-            wav, sr = self.tts.generate(
+            gen_kwargs = dict(
                 text=seg.text, language=language,
-                speaker_embed=speaker_embed, prosody=prosody,
+                speaker_embed=seg_embed, prosody=prosody,
                 max_new_tokens=max_new_tokens)
+            if seg_temp is not None:
+                gen_kwargs["temperature"] = seg_temp
+            wav, sr = self.tts.generate(**gen_kwargs)
 
             duration = len(wav) / sr
             segment_results.append(SegmentResult(
@@ -287,10 +299,22 @@ class LongFormSynthesizer:
             if seed is not None:
                 np.random.seed(seed + seg.index)
 
-            wav, sr = self.tts.generate(
+            # Per-segment variation (Lever 5)
+            seg_embed = speaker_embed
+            seg_temp = None
+            if speaker_embed is not None:
+                rng = np.random.RandomState(42 + seg.index)
+                seg_embed = speaker_embed + (
+                    rng.randn(*speaker_embed.shape).astype(np.float32) * 0.02)
+                seg_temp = 0.9 * (1.0 + rng.uniform(-0.1, 0.1))
+
+            gen_kwargs = dict(
                 text=seg.text, language=language,
-                speaker_embed=speaker_embed, prosody=prosody,
+                speaker_embed=seg_embed, prosody=prosody,
                 max_new_tokens=max_new_tokens)
+            if seg_temp is not None:
+                gen_kwargs["temperature"] = seg_temp
+            wav, sr = self.tts.generate(**gen_kwargs)
 
             current_time += len(wav) / sr
             completed += 1
