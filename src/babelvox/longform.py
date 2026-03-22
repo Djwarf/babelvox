@@ -156,24 +156,66 @@ def segment_text(text: str, strategy: str = "natural") -> list[Segment]:
     raise ValueError(f"unknown segmentation strategy: {strategy!r}")
 
 
+def _segment_gap_ms(prev_type: str, curr_type: str) -> int:
+    """Return silence gap duration (ms) between two segment types.
+
+    Mimics natural human pacing: short breath between sentences,
+    longer pause between paragraphs, full stop at chapter breaks.
+    """
+    if prev_type == "chapter_marker" or curr_type == "chapter_marker":
+        return 1000
+    if curr_type == "paragraph":
+        return 600
+    return 300  # sentence-to-sentence
+
+
+def _soft_onset(wav: np.ndarray, fade_samples: int = 1200) -> np.ndarray:
+    """Apply a short fade-in to prevent abrupt onset."""
+    n = min(fade_samples, len(wav))
+    if n > 0:
+        wav = wav.copy()
+        wav[:n] *= np.linspace(0, 1, n, dtype=np.float32)
+    return wav
+
+
 def crossfade_concat(waveforms: list[np.ndarray],
-                     crossfade_samples: int = 2400) -> np.ndarray:
-    """Concatenate waveforms with crossfade overlap between adjacent pairs."""
+                     crossfade_samples: int = 4800,
+                     gaps_ms: list[int] | None = None,
+                     sample_rate: int = 24000) -> np.ndarray:
+    """Concatenate waveforms with silence gaps and equal-power crossfade.
+
+    Args:
+        waveforms: List of audio arrays to join.
+        crossfade_samples: Overlap length for crossfade (default 200ms).
+        gaps_ms: List of N-1 silence durations (ms) between adjacent
+            segments. If None, no silence is inserted (pure crossfade).
+        sample_rate: Audio sample rate for gap calculation.
+    """
     if not waveforms:
         return np.zeros(1, dtype=np.float32)
     if len(waveforms) == 1:
-        return waveforms[0]
+        return _soft_onset(waveforms[0])
 
-    result_parts = [waveforms[0]]
+    result_parts = [_soft_onset(waveforms[0])]
     for i in range(1, len(waveforms)):
         prev = result_parts[-1]
         curr = waveforms[i]
-        ol = min(crossfade_samples, len(prev) // 2, len(curr) // 2)
 
+        # Insert silence gap if specified
+        if gaps_ms and i - 1 < len(gaps_ms) and gaps_ms[i - 1] > 0:
+            gap_samples = int(sample_rate * gaps_ms[i - 1] / 1000)
+            result_parts.append(np.zeros(gap_samples, dtype=np.float32))
+            # After a silence gap, apply soft onset to next segment
+            curr = _soft_onset(curr)
+            result_parts.append(curr)
+            continue
+
+        # Equal-power crossfade (constant perceptual loudness)
+        ol = min(crossfade_samples, len(prev) // 2, len(curr) // 2)
         if ol > 0:
-            fade_out = np.linspace(1.0, 0.0, ol, dtype=np.float32)
-            fade_in = np.linspace(0.0, 1.0, ol, dtype=np.float32)
-            # Trim tail of previous, blend with head of current
+            t = np.linspace(0, np.pi / 2, ol, dtype=np.float32)
+            fade_out = np.cos(t)
+            fade_in = np.sin(t)
             blended = prev[-ol:] * fade_out + curr[:ol] * fade_in
             result_parts[-1] = prev[:-ol]
             result_parts.append(blended)
@@ -196,7 +238,7 @@ class LongFormSynthesizer:
 
     def synthesize(self, text, strategy="natural", speaker=None,
                    speaker_embed=None, language="English", prosody=None,
-                   crossfade_samples=2400, max_new_tokens=512,
+                   crossfade_samples=4800, max_new_tokens=512,
                    progress_callback=None, resume_from=0,
                    seed=None):
         """Synthesize long text as a single waveform.
@@ -213,6 +255,7 @@ class LongFormSynthesizer:
             speaker_embed = self.tts.default_speaker
 
         waveforms = []
+        seg_types = []  # track types for gap computation
         segment_results = []
         t0 = time.time()
         current_time = 0.0
@@ -220,12 +263,14 @@ class LongFormSynthesizer:
         logger.info("Long-form synthesis: %d segments (%s strategy)",
                      len(segments), strategy)
 
+        prev_type = None
         for seg in segments[resume_from:]:
             if seg.type == "chapter_marker":
                 segment_results.append(SegmentResult(
                     segment=seg, start_time=current_time,
                     end_time=current_time, duration=0.0))
                 logger.debug("  [%d] chapter marker: %s", seg.index, seg.text)
+                prev_type = "chapter_marker"
                 continue
 
             if seed is not None:
@@ -250,11 +295,17 @@ class LongFormSynthesizer:
             wav, sr = self.tts.generate(**gen_kwargs)
 
             duration = len(wav) / sr
+            # Account for gap before this segment in timestamps
+            if waveforms and prev_type is not None:
+                gap_secs = _segment_gap_ms(prev_type, seg.type) / 1000.0
+                current_time += gap_secs
             segment_results.append(SegmentResult(
                 segment=seg, start_time=current_time,
                 end_time=current_time + duration, duration=duration))
             current_time += duration
             waveforms.append(wav)
+            seg_types.append(seg.type)
+            prev_type = seg.type
 
             if progress_callback:
                 progress_callback(SynthesisProgress(
@@ -267,7 +318,13 @@ class LongFormSynthesizer:
         if not waveforms:
             return SynthesisResult(waveform=np.zeros(1, dtype=np.float32))
 
-        full_wav = crossfade_concat(waveforms, crossfade_samples)
+        # Compute per-gap silence durations based on segment types
+        gaps_ms = []
+        for i in range(1, len(seg_types)):
+            gaps_ms.append(_segment_gap_ms(seg_types[i - 1], seg_types[i]))
+
+        full_wav = crossfade_concat(waveforms, crossfade_samples,
+                                    gaps_ms=gaps_ms)
         logger.info("Long-form complete: %.1fs audio from %d segments",
                      len(full_wav) / 24000, len(waveforms))
 
@@ -280,7 +337,10 @@ class LongFormSynthesizer:
                           speaker_embed=None, language="English",
                           prosody=None, max_new_tokens=512,
                           resume_from=0, seed=None):
-        """Yield (waveform, sample_rate, progress) per segment."""
+        """Yield (waveform, sample_rate, progress) per segment.
+
+        Appends natural silence gaps between segments for human-like pacing.
+        """
         segments = segment_text(text, strategy)
 
         if speaker and self.tts.speaker_library:
@@ -291,9 +351,11 @@ class LongFormSynthesizer:
         t0 = time.time()
         current_time = 0.0
         completed = 0
+        prev_type = None
 
         for seg in segments[resume_from:]:
             if seg.type == "chapter_marker":
+                prev_type = "chapter_marker"
                 continue
 
             if seed is not None:
@@ -316,8 +378,18 @@ class LongFormSynthesizer:
                 gen_kwargs["temperature"] = seg_temp
             wav, sr = self.tts.generate(**gen_kwargs)
 
+            # Append silence gap for natural pacing
+            if prev_type is not None:
+                gap_ms = _segment_gap_ms(prev_type, seg.type)
+                gap_samples = int(sr * gap_ms / 1000)
+                wav = np.concatenate([np.zeros(gap_samples, dtype=np.float32),
+                                      _soft_onset(wav)])
+            else:
+                wav = _soft_onset(wav)
+
             current_time += len(wav) / sr
             completed += 1
+            prev_type = seg.type
 
             progress = SynthesisProgress(
                 total_segments=len(segments),

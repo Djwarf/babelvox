@@ -171,7 +171,7 @@ POST /tts
 
 ### Long-form synthesis
 
-Synthesize books, articles, or long texts with automatic segmentation, crossfade, and progress tracking:
+Synthesize books, articles, or long texts with automatic segmentation and natural pacing. Segments are joined with equal-power crossfade and breathing pauses — 300ms between sentences, 600ms between paragraphs, 1000ms at chapter breaks — so output sounds like a human reading rather than mechanical concatenation:
 
 ```python
 from babelvox import LongFormSynthesizer

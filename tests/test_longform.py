@@ -98,7 +98,10 @@ class TestCrossfadeConcat:
     def test_crossfade_single_wav(self):
         wav = np.ones(4800, dtype=np.float32) * 0.5
         result = crossfade_concat([wav])
-        np.testing.assert_array_equal(result, wav)
+        # Soft onset applies fade-in, so start ramps up but end matches
+        assert len(result) == len(wav)
+        assert result[-1] == wav[-1]
+        assert result[0] < wav[0]  # fade-in starts lower
 
     def test_crossfade_empty(self):
         result = crossfade_concat([])
