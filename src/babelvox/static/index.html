@@ -596,7 +596,12 @@ canvas.waveform {
           <button class="snippet-btn" onclick="insertSSML('date')">&lt;say-as date&gt;</button>
           <button class="snippet-btn" onclick="insertSSML('telephone')">&lt;say-as telephone&gt;</button>
           <button class="snippet-btn" onclick="insertSSML('spell')">&lt;say-as spell-out&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('fraction')">&lt;say-as fraction&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('unit')">&lt;say-as unit&gt;</button>
           <button class="snippet-btn" onclick="insertSSML('emphasis')">&lt;emphasis&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('voice')">&lt;voice&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('p')">&lt;p&gt;</button>
+          <button class="snippet-btn" onclick="insertSSML('mark')">&lt;mark&gt;</button>
           <button class="snippet-btn" onclick="insertSSML('template')">Full Template</button>
         </div>
       </div>
@@ -1014,14 +1019,20 @@ const SSML_SNIPPETS = {
   date: '<say-as interpret-as="date" format="mdy">03/20/2026</say-as>',
   telephone: '<say-as interpret-as="telephone">555-123-4567</say-as>',
   spell: '<say-as interpret-as="spell-out">NASA</say-as>',
-  emphasis: '<emphasis>important</emphasis>',
+  fraction: '<say-as interpret-as="fraction">3/4</say-as>',
+  unit: '<say-as interpret-as="unit">5kg</say-as>',
+  emphasis: '<emphasis level="strong">important</emphasis>',
+  voice: '<voice name="steve">Hello from Steve.</voice>',
+  p: '<p>This is a paragraph.</p>',
+  mark: '<mark name="section1"/>',
   template: `<speak>
-Hello, welcome to BabelVox.
+<p>Hello, welcome to BabelVox.</p>
+<p>The price is <say-as interpret-as="number">$4.50</say-as>.
 <break time="500ms"/>
-The price is <say-as interpret-as="number">$4.50</say-as>.
-<break time="300ms"/>
-Call us at <say-as interpret-as="telephone">555-123-4567</say-as>.
-<sub alias="World Wide Web">WWW</sub> is great.
+That is <say-as interpret-as="fraction">3/4</say-as> off!
+<emphasis level="strong">Amazing</emphasis> deal.</p>
+<p>Call us at <say-as interpret-as="telephone">555-123-4567</say-as>.
+<sub alias="World Wide Web">WWW</sub> is great.</p>
 </speak>`,
 };
 

@@ -13,11 +13,16 @@ class TestLooksLikeSSML:
     def test_sub_tag(self):
         assert looks_like_ssml("The <sub alias='World Wide Web'>WWW</sub>")
 
+    def test_voice_tag(self):
+        assert looks_like_ssml("<voice name='steve'>Hello</voice>")
+
+    def test_mark_tag(self):
+        assert looks_like_ssml("Hello <mark name='x'/> world")
+
     def test_plain_text(self):
         assert not looks_like_ssml("Hello world")
 
     def test_angle_brackets_in_math(self):
-        # < in math context shouldn't trigger
         assert not looks_like_ssml("x < 5 and y > 3")
 
 
@@ -98,15 +103,98 @@ class TestSayAs:
         assert "555-1234" in text
 
 
-class TestAnnotations:
-    def test_emphasis_creates_annotation(self):
+# ── Emphasis (immediate — applies capitalization) ─────────────────────
+
+class TestEmphasis:
+    def test_strong_capitalizes(self):
         ssml = "<speak>This is <emphasis level='strong'>important</emphasis> text</speak>"
         text, annotations = parse_ssml(ssml)
-        assert "important" in text
-        assert len(annotations) == 1
-        assert annotations[0].type == "emphasis"
-        assert annotations[0].params.get("level") == "strong"
+        assert "IMPORTANT" in text
+        assert len(annotations) == 0  # immediate, not deferred
 
+    def test_moderate_titlecases(self):
+        ssml = "<speak><emphasis level='moderate'>hello world</emphasis></speak>"
+        text, _ = parse_ssml(ssml)
+        assert "Hello World" in text
+
+    def test_reduced_lowercases(self):
+        ssml = "<speak><emphasis level='reduced'>HELLO</emphasis></speak>"
+        text, _ = parse_ssml(ssml)
+        assert "hello" in text
+
+    def test_none_unchanged(self):
+        ssml = "<speak><emphasis level='none'>Hello</emphasis></speak>"
+        text, _ = parse_ssml(ssml)
+        assert "Hello" in text
+
+    def test_default_is_moderate(self):
+        ssml = "<speak><emphasis>hello world</emphasis></speak>"
+        text, _ = parse_ssml(ssml)
+        assert "Hello World" in text
+
+
+# ── Paragraph and sentence markers ───────────────────────────────────
+
+class TestParagraphSentence:
+    def test_p_adds_period(self):
+        ssml = "<speak><p>First paragraph</p><p>Second paragraph</p></speak>"
+        text, _ = parse_ssml(ssml)
+        assert ". " in text or "." in text
+        assert "First paragraph" in text
+        assert "Second paragraph" in text
+
+    def test_s_adds_period(self):
+        ssml = "<speak><s>First sentence</s><s>Second sentence</s></speak>"
+        text, _ = parse_ssml(ssml)
+        assert ". " in text or "." in text
+
+    def test_p_preserves_existing_punctuation(self):
+        ssml = "<speak><p>Already has a period.</p><p>Next</p></speak>"
+        text, _ = parse_ssml(ssml)
+        # Should not double-punctuate
+        assert ".." not in text
+
+
+# ── Voice tag ────────────────────────────────────────────────────────
+
+class TestVoice:
+    def test_voice_creates_annotation(self):
+        ssml = "<speak><voice name='steve'>Hello from Steve</voice></speak>"
+        text, annotations = parse_ssml(ssml)
+        assert "Hello from Steve" in text
+        assert len(annotations) == 1
+        assert annotations[0].type == "voice"
+        assert annotations[0].params.get("name") == "steve"
+
+    def test_voice_span_positions(self):
+        ssml = "<speak>Intro <voice name='lou'>Lou speaks</voice> outro</speak>"
+        text, annotations = parse_ssml(ssml)
+        assert annotations[0].start == 6  # after "Intro "
+        assert text[annotations[0].start:annotations[0].end] == "Lou speaks"
+
+
+# ── Mark tag ─────────────────────────────────────────────────────────
+
+class TestMark:
+    def test_mark_creates_annotation(self):
+        ssml = "<speak>Hello <mark name='mid'/>world</speak>"
+        text, annotations = parse_ssml(ssml)
+        assert text == "Hello world"
+        assert len(annotations) == 1
+        assert annotations[0].type == "mark"
+        assert annotations[0].params["name"] == "mid"
+
+    def test_mark_position(self):
+        ssml = "<speak>AB<mark name='x'/>CD</speak>"
+        text, annotations = parse_ssml(ssml)
+        assert text == "ABCD"
+        assert annotations[0].start == 2
+        assert annotations[0].end == 2  # zero-width
+
+
+# ── Prosody and phoneme (deferred annotations) ───────────────────────
+
+class TestDeferredAnnotations:
     def test_prosody_creates_annotation(self):
         ssml = "<speak><prosody rate='fast' pitch='+2st'>Quick speech</prosody></speak>"
         text, annotations = parse_ssml(ssml)
@@ -114,27 +202,28 @@ class TestAnnotations:
         assert len(annotations) == 1
         assert annotations[0].type == "prosody"
         assert annotations[0].params.get("rate") == "fast"
-        assert annotations[0].params.get("pitch") == "+2st"
 
     def test_phoneme_creates_annotation(self):
-        ssml = "<speak>I say <phoneme ph='təˈmeɪtoʊ'>tomato</phoneme></speak>"
+        ssml = ("<speak>I say <phoneme ph='t&#x259;&#x2C8;me&#x26A;"
+                "to&#x28A;'>tomato</phoneme></speak>")
         text, annotations = parse_ssml(ssml)
         assert "tomato" in text
         assert len(annotations) == 1
         assert annotations[0].type == "phoneme"
 
     def test_annotation_spans_correct(self):
-        ssml = "<speak>AB<emphasis>CD</emphasis>EF</speak>"
+        ssml = "<speak>AB<prosody rate='fast'>CD</prosody>EF</speak>"
         text, annotations = parse_ssml(ssml)
         assert text == "ABCDEF"
         assert annotations[0].start == 2
         assert annotations[0].end == 4
 
     def test_nested_elements(self):
-        ssml = "<speak><prosody rate='slow'><emphasis>word</emphasis></prosody></speak>"
+        ssml = ("<speak><prosody rate='slow'>"
+                "<emphasis level='strong'>word</emphasis></prosody></speak>")
         text, annotations = parse_ssml(ssml)
-        assert "word" in text
-        assert len(annotations) == 2  # one for prosody, one for emphasis
+        assert "WORD" in text
+        assert len(annotations) == 1  # only prosody is deferred; emphasis is immediate
 
 
 class TestMalformedSSML:

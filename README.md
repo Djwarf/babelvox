@@ -318,8 +318,12 @@ babelvox --ssml --text '<speak>Hello.<break time="500ms"/>World.</speak>' -o out
 | `<break time="500ms"/>` | Insert pause (maps to punctuation) |
 | `<break strength="strong"/>` | Insert pause by strength level |
 | `<sub alias="...">` | Replace text with alias |
-| `<say-as interpret-as="number\|date\|time\|telephone\|spell-out">` | Normalize to spoken form |
-| `<emphasis>`, `<prosody>`, `<phoneme>` | Parsed into annotations (best-effort prosody hints) |
+| `<say-as interpret-as="...">` | Normalize to spoken form (number, date, time, telephone, spell-out, fraction, unit, verbatim) |
+| `<emphasis level="strong">` | Apply emphasis (strong=CAPS, moderate=Title Case, reduced=lower) |
+| `<p>`, `<s>` | Paragraph/sentence boundaries with natural pauses |
+| `<voice name="steve">` | Speaker selection (maps to saved profiles, annotation for pipeline) |
+| `<mark name="..."/>` | Timing bookmark (annotation for timestamp tracking) |
+| `<prosody>`, `<phoneme>` | Parsed into annotations (best-effort prosody hints) |
 
 Onomatopoeia (boom, crash, sizzle, etc.) is detected and annotated for prosody emphasis.
 

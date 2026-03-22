@@ -172,6 +172,38 @@ class TestNormalizeSayAs:
         result = normalize_say_as("hello", "unknown_type")
         assert result == "hello"
 
+    def test_verbatim(self):
+        result = normalize_say_as("ABC", "verbatim")
+        assert result == "A B C"
+
+    def test_fraction_half(self):
+        result = normalize_say_as("1/2", "fraction")
+        assert result == "one half"
+
+    def test_fraction_three_quarters(self):
+        result = normalize_say_as("3/4", "fraction")
+        assert result == "three quarters"
+
+    def test_fraction_generic(self):
+        result = normalize_say_as("2/7", "fraction")
+        assert "two" in result
+        assert "seventh" in result
+
+    def test_unit_kg(self):
+        result = normalize_say_as("5kg", "unit")
+        assert "five" in result
+        assert "kilogram" in result
+
+    def test_unit_singular(self):
+        result = normalize_say_as("1m", "unit")
+        assert "one" in result
+        assert "meter" in result
+        assert "meters" not in result
+
+    def test_unit_unknown_suffix(self):
+        result = normalize_say_as("10xyz", "unit")
+        assert "ten" in result
+
 
 class TestNormalizeTextPipeline:
     def test_combined(self):

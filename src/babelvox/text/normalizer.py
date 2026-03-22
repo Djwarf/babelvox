@@ -200,14 +200,38 @@ def normalize_letter_acronyms(text: str) -> str:
     return _LETTER_ACRONYM_RE.sub(_repl, text)
 
 
+_UNIT_NAMES = {
+    "kg": "kilogram", "g": "gram", "mg": "milligram",
+    "lb": "pound", "oz": "ounce",
+    "km": "kilometer", "m": "meter", "cm": "centimeter", "mm": "millimeter",
+    "mi": "mile", "ft": "foot", "in": "inch", "yd": "yard",
+    "l": "liter", "ml": "milliliter", "gal": "gallon",
+    "s": "second", "ms": "millisecond", "min": "minute", "hr": "hour",
+    "mph": "miles per hour", "kph": "kilometers per hour",
+    "kb": "kilobyte", "mb": "megabyte", "gb": "gigabyte", "tb": "terabyte",
+}
+_UNIT_PLURALS = {"foot": "feet", "inch": "inches"}
+_UNIT_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$")
+_FRACTION_RE = re.compile(r"^(\d+)/(\d+)$")
+
+_SIMPLE_FRACTIONS = {
+    (1, 2): "one half", (1, 3): "one third", (2, 3): "two thirds",
+    (1, 4): "one quarter", (3, 4): "three quarters",
+    (1, 5): "one fifth", (2, 5): "two fifths", (3, 5): "three fifths",
+    (4, 5): "four fifths", (1, 8): "one eighth", (3, 8): "three eighths",
+    (5, 8): "five eighths", (7, 8): "seven eighths",
+}
+
+
 def normalize_say_as(text: str, interpret_as: str, fmt: str = "",
                      language: str = "english") -> str:
     """Dispatcher for SSML <say-as> interpret-as values."""
     text = text.strip()
-    if interpret_as == "number" or interpret_as == "cardinal":
+    lang_code = _LANG_MAP.get(language.lower(), "en")
+
+    if interpret_as in ("number", "cardinal"):
         return normalize_numbers(text, language)
     if interpret_as == "ordinal":
-        lang_code = _LANG_MAP.get(language.lower(), "en")
         try:
             return _num2words_safe(int(text), lang=lang_code, to="ordinal")
         except ValueError:
@@ -218,8 +242,32 @@ def normalize_say_as(text: str, interpret_as: str, fmt: str = "",
         return normalize_times(text, language)
     if interpret_as == "telephone":
         return normalize_telephone(text)
-    if interpret_as == "characters" or interpret_as == "spell-out":
+    if interpret_as in ("characters", "spell-out", "verbatim"):
         return " ".join(text)
+    if interpret_as == "fraction":
+        m = _FRACTION_RE.match(text)
+        if m:
+            num, den = int(m.group(1)), int(m.group(2))
+            simple = _SIMPLE_FRACTIONS.get((num, den))
+            if simple:
+                return simple
+            num_w = _num2words_safe(num, lang=lang_code)
+            den_w = _num2words_safe(den, lang=lang_code, to="ordinal")
+            if num > 1:
+                den_w += "s"
+            return f"{num_w} {den_w}"
+        return text
+    if interpret_as == "unit":
+        m = _UNIT_RE.match(text)
+        if m:
+            number, unit = float(m.group(1)), m.group(2).lower()
+            num_w = _num2words_safe(int(number) if number == int(number) else number,
+                                    lang=lang_code)
+            unit_name = _UNIT_NAMES.get(unit, unit)
+            if number != 1:
+                unit_name = _UNIT_PLURALS.get(unit_name, unit_name + "s")
+            return f"{num_w} {unit_name}"
+        return text
     return text
 
 
