@@ -1,10 +1,11 @@
 """SSML (Speech Synthesis Markup Language) parser for BabelVox.
 
-Parses a subset of the W3C SSML spec:
-  <break>, <sub>, <say-as>, <emphasis>, <prosody>, <phoneme>
+Parses a useful subset of the W3C SSML 1.1 spec:
+  Immediate: <break>, <sub>, <say-as>, <emphasis>, <p>, <s>
+  Deferred:  <prosody>, <phoneme>, <voice>, <mark>
 
-Tags that affect inference (emphasis, prosody, phoneme) are parsed into
-Annotation objects but not actioned until Phase 2 (prosody control).
+Immediate tags modify text during parsing. Deferred tags create
+Annotation objects for the pipeline to consume downstream.
 """
 from __future__ import annotations
 
@@ -59,6 +60,18 @@ def _parse_break(elem: ET.Element) -> str:
     return strength_map.get(strength, ".")
 
 
+def _apply_emphasis(text: str, level: str) -> str:
+    """Apply emphasis capitalization to text."""
+    level = level.lower() if level else "moderate"
+    if level == "strong":
+        return text.upper()
+    if level == "moderate":
+        return text.title()
+    if level == "reduced":
+        return text.lower()
+    return text  # "none" or unknown
+
+
 def _walk(elem: ET.Element, text_parts: list[str],
           annotations: list[Annotation], normalizer_fn) -> None:
     """Recursively walk SSML element tree, building plain text + annotations."""
@@ -75,7 +88,6 @@ def _walk(elem: ET.Element, text_parts: list[str],
         if alias:
             text_parts.append(alias)
         else:
-            # No alias — keep original text
             if elem.text:
                 text_parts.append(elem.text)
         if elem.tail:
@@ -95,10 +107,49 @@ def _walk(elem: ET.Element, text_parts: list[str],
             text_parts.append(elem.tail)
         return
 
-    # Tags that produce annotations (deferred to Phase 2)
-    if tag in ("emphasis", "prosody", "phoneme"):
+    # <emphasis> — immediate: apply capitalization based on level
+    if tag == "emphasis":
+        inner_parts: list[str] = []
+        if elem.text:
+            inner_parts.append(elem.text)
+        for child in elem:
+            _walk(child, inner_parts, annotations, normalizer_fn)
+        inner_text = "".join(inner_parts)
+        level = elem.get("level", "moderate")
+        text_parts.append(_apply_emphasis(inner_text, level))
+        if elem.tail:
+            text_parts.append(elem.tail)
+        return
+
+    # <p> / <s> — paragraph/sentence boundaries with trailing pause
+    if tag in ("p", "s"):
+        if elem.text:
+            text_parts.append(elem.text)
+        for child in elem:
+            _walk(child, text_parts, annotations, normalizer_fn)
+        # Ensure sentence-ending punctuation for natural pause
+        current = "".join(text_parts)
+        if current and current[-1] not in ".!?":
+            text_parts.append(". ")
+        else:
+            text_parts.append(" ")
+        if elem.tail:
+            text_parts.append(elem.tail)
+        return
+
+    # <mark> — timing bookmark (self-closing)
+    if tag == "mark":
+        pos = sum(len(p) for p in text_parts)
+        name = elem.get("name", "")
+        annotations.append(Annotation(start=pos, end=pos,
+                                       type="mark", params={"name": name}))
+        if elem.tail:
+            text_parts.append(elem.tail)
+        return
+
+    # Tags that produce annotations (deferred to pipeline)
+    if tag in ("prosody", "phoneme", "voice"):
         start = sum(len(p) for p in text_parts)
-        # Process children to get inner text
         if elem.text:
             text_parts.append(elem.text)
         for child in elem:
@@ -126,7 +177,11 @@ def _walk(elem: ET.Element, text_parts: list[str],
 def looks_like_ssml(text: str) -> bool:
     """Heuristic check for SSML content."""
     stripped = text.strip()
-    return stripped.startswith("<speak") or "<break" in stripped or "<sub " in stripped
+    return (stripped.startswith("<speak")
+            or "<break" in stripped
+            or "<sub " in stripped
+            or "<voice" in stripped
+            or "<mark" in stripped)
 
 
 def parse_ssml(text: str, normalizer_fn=None) -> tuple[str, list[Annotation]]:

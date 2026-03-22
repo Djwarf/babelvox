@@ -12,6 +12,7 @@ from babelvox.text.ssml import Annotation, looks_like_ssml, parse_ssml
 
 __all__ = [
     "preprocess_text",
+    "preprocess_text_with_annotations",
     "parse_ssml",
     "Annotation",
     "normalize_text",
@@ -38,12 +39,29 @@ def preprocess_text(text: str, language: str = "english",
     str
         Cleaned plain text ready for tokenization.
     """
+    result, _ = preprocess_text_with_annotations(text, language, is_ssml)
+    return result
+
+
+def preprocess_text_with_annotations(
+        text: str, language: str = "english",
+        is_ssml: bool = False) -> tuple[str, list[Annotation]]:
+    """Run the full text preprocessing pipeline, returning annotations.
+
+    Returns
+    -------
+    tuple[str, list[Annotation]]
+        Cleaned plain text and any SSML annotations (voice, prosody,
+        phoneme, mark) for downstream pipeline use.
+    """
+    annotations: list[Annotation] = []
+
     if is_ssml or looks_like_ssml(text):
         def _say_as_fn(inner, interpret_as, fmt):
             return normalize_say_as(inner, interpret_as, fmt, language)
 
-        text, _annotations = parse_ssml(text, normalizer_fn=_say_as_fn)
+        text, annotations = parse_ssml(text, normalizer_fn=_say_as_fn)
 
     text = normalize_text(text, language)
     text = normalize_punctuation(text)
-    return text
+    return text, annotations
