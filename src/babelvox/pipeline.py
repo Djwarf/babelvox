@@ -1226,11 +1226,10 @@ class BabelVox:
         codes = np.array(all_codes, dtype=np.int64).T[np.newaxis, :, :]  # (1, 16, T)
         wav = self._decode_audio(codes)
 
-        # Fade out to avoid garbled tail when generation hit the token ceiling
-        if not hit_eos:
-            fade_samples = min(2400, len(wav))  # 0.1s at 24kHz
-            fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
-            wav[-fade_samples:] *= fade
+        # Fade out: gentle on natural EOS, stronger on token ceiling
+        fade_samples = min(480 if hit_eos else 2400, len(wav))
+        fade = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+        wav[-fade_samples:] *= fade
 
         # Waveform prosody (rate, pitch, volume)
         if prosody is not None:

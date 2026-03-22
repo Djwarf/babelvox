@@ -100,6 +100,11 @@ def main():
                         help="Write timestamps JSON alongside audio")
     parser.add_argument("--text-file", default=None, metavar="PATH",
                         help="Read text from file instead of --text")
+    parser.add_argument("--epub", default=None, metavar="PATH",
+                        help="Read an epub file and synthesize as audiobook")
+    parser.add_argument("--chapters", default=None, metavar="RANGE",
+                        help="Chapter range for --epub (e.g. '1-5' or '3'). "
+                             "Default: all chapters")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable debug logging")
     args = parser.parse_args()
@@ -148,6 +153,56 @@ def main():
         profile = tts.save_speaker(args.save_speaker, args.ref_audio,
                                    language=args.language)
         print(f"Saved speaker '{profile.name}'")
+        return
+
+    if args.epub:
+        from babelvox.epub import parse_chapter_range, read_epub
+        from babelvox.longform import LongFormSynthesizer
+
+        chapters = read_epub(args.epub)
+        if not chapters:
+            print("No chapters found in epub.")
+            return
+
+        if args.chapters:
+            indices = parse_chapter_range(args.chapters, len(chapters))
+            chapters = [chapters[i] for i in indices]
+
+        print(f"Epub: {len(chapters)} chapter(s) to synthesize")
+        for ch in chapters:
+            print(f"  [{ch.index + 1}] {ch.title} "
+                  f"({ch.word_count} words, {len(ch.paragraphs)} paragraphs)")
+
+        prosody = None
+        if args.emotion:
+            from babelvox.prosody import ProsodyConfig
+            prosody = ProsodyConfig(emotion=args.emotion)
+
+        out_dir = args.output.replace(".wav", "")
+        os.makedirs(out_dir, exist_ok=True)
+
+        synth = LongFormSynthesizer(tts)
+        for ch in chapters:
+            ch_text = ch.text
+            if not ch_text.strip():
+                continue
+
+            ch_num = ch.index + 1
+            safe_title = "".join(
+                c for c in ch.title if c.isalnum() or c in " -_")[:50]
+            ch_path = os.path.join(
+                out_dir, f"{ch_num:03d}_{safe_title.strip()}.wav")
+
+            print(f"\nSynthesizing: {ch.title}...")
+            result = synth.synthesize(
+                ch_text, strategy="natural", speaker=args.speaker,
+                language=args.language, prosody=prosody,
+                max_new_tokens=args.max_tokens)
+
+            sf.write(ch_path, result.waveform, result.sample_rate)
+            print(f"  Saved: {ch_path} ({result.total_duration:.1f}s)")
+
+        print(f"\nDone. Output: {out_dir}/")
         return
 
     if args.serve:

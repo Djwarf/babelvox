@@ -169,9 +169,20 @@ POST /tts
 {"text": "Hello!", "prosody": {"emotion": "happy", "rate": 1.2, "volume": 1.0}}
 ```
 
+### Epub audiobook reader
+
+Read epub files directly and generate per-chapter audio with content-adaptive pacing:
+
+```bash
+babelvox --epub book.epub --speaker steve -o audiobook/
+babelvox --epub book.epub --chapters 1-5 --speaker lou -o chapters/
+```
+
+The epub reader detects paragraph styles (dialogue, narration, thoughts, headings) and adapts generation parameters automatically — dialogue is slightly faster with more varied intonation, thoughts are slower and more contemplative, headings get deliberate pacing with long pauses after.
+
 ### Long-form synthesis
 
-Synthesize books, articles, or long texts with automatic segmentation and natural pacing. Segments are joined with equal-power crossfade and breathing pauses — 300ms between sentences, 600ms between paragraphs, 1000ms at chapter breaks — so output sounds like a human reading rather than mechanical concatenation:
+Synthesize books, articles, or long texts with automatic segmentation and content-adaptive pacing. Each segment is generated with style-appropriate parameters (rate, temperature, repetition penalty), joined with natural breathing pauses and equal-power crossfade:
 
 ```python
 from babelvox import LongFormSynthesizer
